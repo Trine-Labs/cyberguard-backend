@@ -1,0 +1,47 @@
+{
+  "sensitive_paths": [
+    {"path": "/.env", "severity": "critical", "type": "Configuration Exposure", "keywords": ["DB_PASSWORD=", "JWT_SECRET=", "AWS_SECRET_"]},
+    {"path": "/.env.bak", "severity": "critical", "type": "Configuration Exposure", "keywords": ["DB_PASSWORD=", "JWT_SECRET=", "AWS_SECRET_"]},
+    {"path": "/.env.old", "severity": "critical", "type": "Configuration Exposure", "keywords": ["DB_PASSWORD=", "JWT_SECRET=", "AWS_SECRET_"]},
+    {"path": "/.env.local", "severity": "critical", "type": "Configuration Exposure", "keywords": ["DB_PASSWORD=", "JWT_SECRET=", "AWS_SECRET_"]},
+    {"path": "/.env.dev", "severity": "critical", "type": "Configuration Exposure", "keywords": ["DB_PASSWORD=", "JWT_SECRET=", "AWS_SECRET_"]},
+    {"path": "/config.json", "severity": "critical", "type": "Configuration Exposure", "keywords": ["\"database\"", "\"password\"", "\"secret\""]},
+    {"path": "/config.php", "severity": "critical", "type": "Configuration Exposure", "keywords": ["define('DB_PASSWORD'", "$db_password"]},
+    {"path": "/web.config", "severity": "critical", "type": "IIS Configuration", "keywords": ["<configuration>", "<system.webServer>"]},
+    
+    {"path": "/.git/HEAD", "severity": "high", "type": "Source Control Leak", "keywords": ["ref: refs/heads/"]},
+    {"path": "/.git/config", "severity": "high", "type": "Source Control Leak", "keywords": ["[core]", "[remote \"origin\"]"]},
+    {"path": "/package.json", "severity": "high", "type": "Package Manifest", "keywords": ["\"dependencies\"", "\"devDependencies\""]},
+    {"path": "/package.json.bak", "severity": "high", "type": "Backup Exposure", "keywords": ["\"dependencies\"", "\"devDependencies\""]},
+    {"path": "/composer.json", "severity": "high", "type": "Package Manifest", "keywords": ["\"require\"", "\"autoload\""]},
+    {"path": "/docker-compose.yml", "severity": "high", "type": "Docker Configuration", "keywords": ["version:", "services:", "volumes:"]},
+    
+    {"path": "/phpmyadmin/", "severity": "high", "type": "Admin Database", "keywords": ["phpMyAdmin", "pma_"]},
+    {"path": "/pma/", "severity": "high", "type": "Admin Database", "keywords": ["phpMyAdmin", "pma_"]},
+    {"path": "/actuator/health", "severity": "medium", "type": "Administrative Endpoint", "keywords": ["\"status\"", "\"components\""]},
+    {"path": "/actuator/env", "severity": "medium", "type": "Administrative Endpoint", "keywords": ["\"activeProfiles\"", "\"propertySources\""]},
+    {"path": "/wp-admin/", "severity": "high", "type": "Administrative Endpoint", "keywords": ["wp-login.php", "user_login"]},
+    {"path": "/admin/", "severity": "high", "type": "Administrative Endpoint", "keywords": ["type=\"password\""]},
+    {"path": "/dashboard/", "severity": "medium", "type": "Administrative Endpoint", "keywords": ["<title>Dashboard</title>"]},
+    {"path": "/console/", "severity": "high", "type": "Administrative Endpoint", "keywords": ["<title>Console</title>"]},
+    {"path": "/swagger/index.html", "severity": "medium", "type": "API Documentation", "keywords": ["Swagger UI", "swagger-ui"]},
+    {"path": "/api/docs", "severity": "medium", "type": "API Documentation", "keywords": ["Swagger UI", "openapi"]},
+    {"path": "/graphql", "severity": "medium", "type": "GraphQL Endpoint", "keywords": ["\"__schema\"", "graphql"]},
+    {"path": "/jenkins/", "severity": "critical", "type": "CI/CD Exposure", "keywords": ["Jenkins"]},
+    
+    {"path": "/backup.zip", "severity": "high", "type": "Backup Exposure", "keywords": ["PK\u0003\u0004"]},
+    {"path": "/www.zip", "severity": "high", "type": "Backup Exposure", "keywords": ["PK\u0003\u0004"]},
+    {"path": "/html.tar.gz", "severity": "high", "type": "Backup Exposure", "keywords": ["\u001f\u008b"]},
+    {"path": "/debug", "severity": "medium", "type": "Debug Endpoint", "keywords": ["stack trace", "debug info"]}
+  ],
+  "suspicious_patterns": [
+    {"regex": "\\.(bak|old|zip|sql|env|tar\\.gz)$", "severity": "high", "type": "Suspicious Extension"},
+    {"regex": "/(admin|manage|internal|staff|staging|secure)/", "severity": "medium", "type": "Admin/Internal Path"},
+    {"regex": "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", "severity": "low", "type": "UUID Path"}
+  ],
+  "fingerprints": [
+    {"regex": "<title>Jenkins Dashboard</title>|x-jenkins", "app": "Jenkins", "severity": "critical", "type": "CI/CD Exposure"},
+    {"regex": "<title>[^<]*phpMyAdmin[^<]*</title>|Set-Cookie:\\s*phpMyAdmin=", "app": "phpMyAdmin", "severity": "high", "type": "Admin Database"},
+    {"regex": "wp-login\\.php", "app": "WordPress Admin", "severity": "high", "type": "Administrative Endpoint"}
+  ]
+}

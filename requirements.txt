@@ -1,0 +1,35 @@
+fastapi==0.115.5
+fastapi-cache2[redis]==0.2.2
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
+
+# Database
+asyncpg==0.30.0
+sqlalchemy[asyncio]==2.0.36
+psycopg2-binary==2.9.10
+
+# Authentication & Security
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+pyotp==2.9.0
+qrcode[pil]==8.0
+cryptography==43.0.3
+
+# DNS verification
+dnspython==2.7.0
+
+# HTTP Client (for M365 token exchange)
+httpx==0.28.1
+
+# Task Queue
+celery==5.4.0
+redis==5.2.0
+
+# Utilities
+python-multipart==0.0.18
+python-dotenv==1.0.1
+email-validator==2.2.0
+ipaddress  # stdlib, listed for clarity
+beautifulsoup4==4.12.3
+lxml==5.1.0
