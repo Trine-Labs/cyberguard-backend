@@ -93,8 +93,17 @@ async def list_findings(
 
     async def fetch_page():
         async with get_tenant_db(str(current_user.tenant_id)) as db:
+            from sqlalchemy import case
+            severity_order = case(
+                (Finding.severity == "critical", 0),
+                (Finding.severity == "high", 1),
+                (Finding.severity == "medium", 2),
+                (Finding.severity == "low", 3),
+                (Finding.severity == "info", 4),
+                else_=5,
+            )
             page_q = q.order_by(
-                Finding.severity.asc(),
+                severity_order,
                 Finding.created_at.desc()
             ).offset((page - 1) * per_page).limit(per_page)
             res = await db.execute(page_q)

@@ -137,41 +137,223 @@ def _grade_security_headers(headers: dict) -> str:
 
 def _detect_tech_stack(url: str, headers: dict, html: str) -> list[dict]:
     """
-    Detect tech stack and versions using Wappalyzer.
+    Detect tech stack using Wappalyzer + robust multi-layer manual fallbacks.
+    Handles JS-heavy SPAs, PHP frameworks, CDN-served sites, etc.
     Returns: [{"name": "Nginx", "version": "1.18.0"}, ...]
     """
+    result = []
     try:
         wapp = _get_wappalyzer()
         page = WebPage(url, html=html, headers=headers)
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning)
             analysis = wapp.analyze_with_versions_and_categories(page)
-        
-        result = []
         for tech_name, data in analysis.items():
             versions = data.get("versions", [])
             v = versions[0] if versions else ""
             result.append({"name": tech_name, "version": v})
-            
-        # ── Manual Fallback Detections for Stealth Frameworks ──
-        existing_names = {t["name"].lower() for t in result}
-        
-        # Next.js App Router (13+) completely hides traditional headers and data tags
-        if "next.js" not in existing_names:
-            if "_next/static" in html or "__NEXT_DATA__" in html or "self.__next_f" in html:
-                result.append({"name": "Next.js", "version": ""})
-                existing_names.add("next.js")
-                
-        # React fallback (if Next is used, React is inherently used)
-        if "react" not in existing_names:
-            if "next.js" in existing_names or "data-reactroot" in html or "__REACT_DEVTOOLS_GLOBAL_HOOK__" in html:
-                result.append({"name": "React", "version": ""})
-                existing_names.add("react")
-
-        return result
     except Exception as e:
         logger.warning(f"Wappalyzer failed for {url}: {e}")
-        return []
+
+    existing_names = {t["name"].lower() for t in result}
+    h_lower = {k.lower(): v for k, v in headers.items()}
+    html_lower = html.lower()
+
+    def _add(name: str, version: str = ""):
+        if name.lower() not in existing_names:
+            result.append({"name": name, "version": version})
+            existing_names.add(name.lower())
+
+    # ── Layer 1: Response Headers ──────────────────────────────────────────────
+    server = h_lower.get("server", "")
+    x_powered = h_lower.get("x-powered-by", "")
+    x_generator = h_lower.get("x-generator", "")
+    via = h_lower.get("via", "")
+    cf_ray = h_lower.get("cf-ray", "")
+
+    if "nginx" in server:
+        v = re.search(r"nginx/([\d.]+)", server)
+        _add("Nginx", v.group(1) if v else "")
+    if "apache" in server:
+        v = re.search(r"apache/([\d.]+)", server, re.IGNORECASE)
+        _add("Apache HTTP Server", v.group(1) if v else "")
+    if "litespeed" in server.lower():
+        _add("LiteSpeed")
+    if "openresty" in server.lower():
+        _add("OpenResty")
+    if "caddy" in server.lower():
+        _add("Caddy")
+    if "iis" in server.lower():
+        v = re.search(r"iis/([\d.]+)", server, re.IGNORECASE)
+        _add("IIS", v.group(1) if v else "")
+
+    if "php" in x_powered.lower():
+        v = re.search(r"php/([\d.]+)", x_powered, re.IGNORECASE)
+        _add("PHP", v.group(1) if v else "")
+    if "laravel" in x_powered.lower():
+        _add("Laravel")
+    if "express" in x_powered.lower():
+        _add("Express")
+    if "asp.net" in x_powered.lower():
+        v = re.search(r"asp\.net mvc ([\d.]+)", x_powered, re.IGNORECASE)
+        _add("ASP.NET MVC", v.group(1) if v else "")
+        _add("ASP.NET")
+
+    if cf_ray or "cloudflare" in server.lower() or "cloudflare" in via.lower():
+        _add("Cloudflare")
+    if "varnish" in via.lower() or "varnish" in server.lower():
+        _add("Varnish")
+    if "fastly" in via.lower() or "fastly" in server.lower():
+        _add("Fastly")
+    if "akamai" in via.lower():
+        _add("Akamai")
+
+    if x_generator:
+        if "wordpress" in x_generator.lower():
+            _add("WordPress")
+        elif "drupal" in x_generator.lower():
+            _add("Drupal")
+
+    # ── Layer 2: HTML Meta Tags & Generator Tags ───────────────────────────────
+    gen_match = re.search(r'<meta[^>]+name=["\']generator["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
+    if gen_match:
+        gen = gen_match.group(1).lower()
+        if "wordpress" in gen:
+            v = re.search(r"wordpress ([\d.]+)", gen_match.group(1), re.IGNORECASE)
+            _add("WordPress", v.group(1) if v else "")
+        elif "joomla" in gen:
+            _add("Joomla")
+        elif "drupal" in gen:
+            _add("Drupal")
+        elif "wix" in gen:
+            _add("Wix")
+        elif "shopify" in gen:
+            _add("Shopify")
+        elif "squarespace" in gen:
+            _add("Squarespace")
+        elif "hugo" in gen:
+            _add("Hugo")
+        elif "jekyll" in gen:
+            _add("Jekyll")
+        elif "gatsby" in gen:
+            _add("Gatsby")
+
+    # ── Layer 3: HTML Body Patterns ────────────────────────────────────────────
+    # Next.js
+    if "next.js" not in existing_names:
+        if "_next/static" in html or "__NEXT_DATA__" in html or "self.__next_f" in html:
+            _add("Next.js")
+
+    # React
+    if "react" not in existing_names:
+        if "next.js" in existing_names or "data-reactroot" in html or "__REACT_DEVTOOLS_GLOBAL_HOOK__" in html or "react-dom" in html_lower:
+            _add("React")
+
+    # Vue.js
+    if "vue.js" not in existing_names and "vue" not in existing_names:
+        if "data-v-" in html or "__vue_app__" in html or "vue.runtime.esm" in html_lower or "createapp" in html_lower:
+            v = re.search(r"vue@([\d.]+)", html)
+            _add("Vue.js", v.group(1) if v else "")
+
+    # Alpine.js
+    if "alpine.js" not in existing_names:
+        if "x-data=" in html or "x-bind:" in html or "@click=" in html or "alpine" in html_lower and "cdn" in html_lower:
+            _add("Alpine.js")
+
+    # Laravel (server-side rendered)
+    if "laravel" not in existing_names:
+        if "laravel_session" in html_lower or "laravel" in html_lower or "_token" in html and "csrf" in html_lower:
+            _add("Laravel")
+
+    # Livewire (Laravel component)
+    if "livewire" not in existing_names:
+        if "wire:id=" in html or "livewire/livewire.js" in html_lower or "livewire" in html_lower:
+            _add("Livewire")
+
+    # Inertia.js (InvoiceNinja uses this)
+    if "inertia" not in existing_names:
+        if 'id="app"' in html and 'data-page=' in html:
+            _add("Inertia.js")
+        elif "inertia" in html_lower and "component" in html_lower:
+            _add("Inertia.js")
+
+    # Tailwind CSS
+    if "tailwind css" not in existing_names and "tailwindcss" not in existing_names:
+        if "tailwindcss" in html_lower or "tw-" in html or re.search(r'class="[^"]*(?:flex|grid|px-|py-|text-|bg-|font-)[^"]*"', html):
+            _add("Tailwind CSS")
+
+    # Bootstrap
+    if "bootstrap" not in existing_names:
+        if "bootstrap" in html_lower and ("btn-" in html or "col-md-" in html or "navbar" in html_lower):
+            v = re.search(r"bootstrap@([\d.]+)", html) or re.search(r"bootstrap/([\d.]+)/", html)
+            _add("Bootstrap", v.group(1) if v else "")
+
+    # jQuery
+    if "jquery" not in existing_names:
+        v = re.search(r"jquery[.-]([\d.]+)", html_lower) or re.search(r"jquery/([\d.]+)/", html_lower)
+        if "jquery" in html_lower:
+            _add("jQuery", v.group(1) if v else "")
+
+    # Angular
+    if "angular" not in existing_names:
+        if "ng-version=" in html or "_nghost-" in html or "ng-app=" in html:
+            v = re.search(r"ng-version=[\"']([\d.]+)", html)
+            _add("Angular", v.group(1) if v else "")
+
+    # Svelte
+    if "svelte" not in existing_names:
+        if "svelte" in html_lower and ("__svelte" in html or "svelte-" in html):
+            _add("Svelte")
+
+    # WordPress specific patterns
+    if "wordpress" not in existing_names:
+        if "wp-content/" in html or "wp-includes/" in html or "wp-json" in html_lower:
+            _add("WordPress")
+        if "wordpress" in existing_names and "woocommerce" not in existing_names:
+            if "woocommerce" in html_lower:
+                _add("WooCommerce")
+
+    # Shopify
+    if "shopify" not in existing_names:
+        if "cdn.shopify.com" in html_lower or "shopify.com/s/files" in html_lower:
+            _add("Shopify")
+
+    # Webflow
+    if "webflow" not in existing_names:
+        if "webflow.com" in html_lower or 'data-wf-' in html:
+            _add("Webflow")
+
+    # Nuxt.js
+    if "nuxt.js" not in existing_names and "nuxt" not in existing_names:
+        if "__nuxt" in html or "_nuxt/" in html or "nuxt" in html_lower:
+            _add("Nuxt.js")
+
+    # Gatsby
+    if "gatsby" not in existing_names:
+        if "gatsby-" in html_lower or "___gatsby" in html:
+            _add("Gatsby")
+
+    # Astro
+    if "astro" not in existing_names:
+        if "astro-" in html_lower or "<astro-" in html_lower:
+            _add("Astro")
+
+    # Ruby on Rails
+    if "ruby on rails" not in existing_names:
+        if "rails" in html_lower and ("authenticity_token" in html_lower or "data-turbo" in html):
+            _add("Ruby on Rails")
+
+    # Django
+    if "django" not in existing_names:
+        if "csrfmiddlewaretoken" in html_lower or "django" in html_lower:
+            _add("Django")
+
+    # ASP.NET
+    if "asp.net" not in existing_names:
+        if "__viewstate" in html_lower or "asp.net" in html_lower:
+            _add("ASP.NET")
+
+    return result
 
 async def _calculate_cve_data(tech_stack: list[dict]) -> list[dict]:
     """Fetch actual CVE data from CveLookupService."""
