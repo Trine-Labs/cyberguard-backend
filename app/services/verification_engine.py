@@ -124,11 +124,11 @@ class NucleiVerificationEngine:
             "-duc",           # Disable update checks which can hang
             "-tags", tags,
             "-severity", "info,low,medium,high,critical",
-            "-timeout", "5",   # Lowered from 10 to release sockets quickly
+            "-timeout", "5",   # Per-request timeout in seconds
             "-retries", "1",
-            "-bulk-size", "5",  # Lowered from 50 to limit parallel hosts
-            "-rate-limit", "25", # Lowered from 100 to prevent network choking
-            "-c", "10",        # Restrict concurrency to 10 (down from 25 default) to save CPU/RAM
+            "-bulk-size", "5",  # Limit parallel hosts
+            "-rate-limit", "25", # Prevent network choking
+            "-c", "5",          # Only 5 concurrent template threads to stay under 512MB RAM
         ]
 
         if self.templates_dir.exists():
@@ -146,7 +146,7 @@ class NucleiVerificationEngine:
                     text=True,
                     encoding='utf-8',
                     errors='replace',
-                    timeout=300  # Hard timeout of 5 minutes per run
+                    timeout=180  # Hard timeout of 3 minutes per run
                 )
 
             process = await asyncio.to_thread(run_nuclei)

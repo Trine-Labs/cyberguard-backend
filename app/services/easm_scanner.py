@@ -1159,48 +1159,15 @@ async def _scan_domain_inner(
     else:
         criticality = "medium"
 
-    # Run Active Verification (Nuclei) and Passive CVE Mapping concurrently
+    # Run Passive CVE Mapping only (Nuclei runs as a separate phase after all hosts are scanned)
     do_vuln = not modules or "vuln" in modules
     
     async def dummy_cve(): return []
-    async def dummy_nuclei(): return []
-
-    engine = NucleiVerificationEngine()
-    tech_tags = [t.get("name", "").lower().replace(" ", "-") for t in tech_stack if t.get("name")]
+    cve_data = await (_calculate_cve_data(tech_stack) if do_vuln else dummy_cve())
     
-    nuclei_task = asyncio.create_task(engine.verify(list(open_web_urls) if open_web_urls else hostname, tags=tech_tags) if do_vuln else dummy_nuclei())
-    cve_task = asyncio.create_task(_calculate_cve_data(tech_stack) if do_vuln else dummy_cve())
-    
-    cve_data, raw_nuclei_data = await asyncio.gather(cve_task, nuclei_task)
-    
-    # ── Merge Nuclei tech detections into tech_stack ──
-    tech_stack_names = {t.get("name", "").lower() for t in tech_stack if t.get("name")}
+    # Nuclei data is empty here — it will be populated in the separate Nuclei phase
     nuclei_data = []
-    
-    for n in raw_nuclei_data:
-        t_id = str(n.get("template_id", "")).lower()
-        
-        # If this is a technology detection template rather than a vulnerability
-        if "wappalyzer" in t_id or t_id.endswith("-detect") or "tech" in t_id:
-            # 1. Check extracted results (like Wappalyzer template outputs)
-            for ext in n.get("extracted_results", []):
-                ext_str = str(ext).strip()
-                if ext_str and ext_str.lower() not in tech_stack_names:
-                    tech_stack.append({"name": ext_str, "version": ""})
-                    tech_stack_names.add(ext_str.lower())
-            
-            # 2. Check the matcher/template name itself (e.g. "Next.js Detect")
-            name = n.get("cve_id", "")
-            if isinstance(name, str) and "detect" in name.lower():
-                clean_name = name.lower().replace(" detect", "").replace("-", " ").strip().title()
-                if clean_name and clean_name.lower() not in tech_stack_names and "Unknown" not in clean_name:
-                    tech_stack.append({"name": clean_name, "version": ""})
-                    tech_stack_names.add(clean_name.lower())
-        else:
-            # Real vulnerability
-            nuclei_data.append(n)
-            
-    cve_count = len(cve_data) + len(nuclei_data)
+    cve_count = len(cve_data)
 
     from app.database import get_tenant_db
     async with get_tenant_db(str(tenant_id)) as session:
@@ -1513,6 +1480,19 @@ async def _run_easm_scan_inner(tenant_id: str, scope_values: list[str], passed_j
             except Exception:
                 pass
 
+    # ── Mark asset discovery phase complete ────────────────────────────────
+    logger.info(f"[EASM] Asset discovery complete for tenant {tenant_id}: {completed} ok, {failed} failed, {total_subdomains} subdomains found")
+
+    # ── Phase 2: Run Nuclei vulnerability scanning separately ─────────────
+    # This runs AFTER all assets are stored, one target at a time,
+    # to prevent memory exhaustion on low-resource servers (512MB Render).
+    nuclei_ok = 0
+    nuclei_fail = 0
+    try:
+        nuclei_ok, nuclei_fail = await _run_nuclei_phase(tenant_id, domains, modules)
+    except Exception as e:
+        logger.error(f"[EASM] Nuclei phase failed: {e}")
+
     # ── Mark job complete ────────────────────────────────────────────────────
     if job_id:
         try:
@@ -1530,13 +1510,186 @@ async def _run_easm_scan_inner(tenant_id: str, scope_values: list[str], passed_j
                         "completed": completed,
                         "failed": failed,
                         "subdomains_found": total_subdomains,
+                        "nuclei_scanned": nuclei_ok,
+                        "nuclei_failed": nuclei_fail,
                     }
                     if failed > 0:
                         j.error_message = f"{failed} host(s) failed to scan"
         except Exception as e:
             logger.warning(f"[EASM] Could not update scan job: {e}")
 
-    logger.info(f"[EASM] Scan complete for tenant {tenant_id}: {completed} ok, {failed} failed, {total_subdomains} subdomains found")
+    logger.info(f"[EASM] Scan fully complete for tenant {tenant_id}: {completed} ok, {failed} failed, nuclei={nuclei_ok}/{nuclei_ok+nuclei_fail}")
+
+# ── Nuclei Vulnerability Scan Phase (runs separately after asset discovery) ────
+
+async def _run_nuclei_phase(tenant_id: str, domains: list[str], modules: list[str] | None = None) -> tuple[int, int]:
+    """
+    Phase 2 of the EASM scan: Run Nuclei vulnerability scanning.
+    
+    This runs AFTER all assets have been discovered and stored in the DB.
+    Scans one hostname at a time to keep memory usage under 512MB.
+    Returns (ok_count, fail_count).
+    """
+    import gc
+    
+    do_vuln = not modules or "vuln" in modules
+    if not do_vuln:
+        return (0, 0)
+    
+    engine = NucleiVerificationEngine()
+    if not engine.nuclei_bin.exists():
+        logger.warning("[EASM/Nuclei] Nuclei binary not found, skipping vulnerability scan phase")
+        return (0, 0)
+    
+    tid = uuid.UUID(tenant_id)
+    ok_count = 0
+    fail_count = 0
+    
+    logger.info(f"[EASM/Nuclei] Starting vulnerability scan phase for {len(domains)} host(s)")
+    
+    for hostname in domains:
+        try:
+            # Read the stored asset to get tech_stack and web URLs
+            async with get_tenant_db(tenant_id) as session:
+                result = await session.execute(
+                    select(EasmAsset).where(
+                        and_(
+                            EasmAsset.tenant_id == tid,
+                            EasmAsset.hostname == hostname,
+                        )
+                    )
+                )
+                asset = result.scalar_one_or_none()
+                
+                if not asset:
+                    logger.debug(f"[EASM/Nuclei] No asset found for {hostname}, skipping")
+                    continue
+                
+                # Parse tech_stack from stored JSON strings
+                tech_stack = []
+                for t in (asset.tech_stack or []):
+                    try:
+                        tech_stack.append(json.loads(t) if isinstance(t, str) else t)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                
+                # Build web URLs from stored ports
+                port_result = await session.execute(
+                    select(EasmPort).where(
+                        and_(
+                            EasmPort.tenant_id == tid,
+                            EasmPort.asset_id == asset.id,
+                        )
+                    )
+                )
+                ports = port_result.scalars().all()
+                
+                open_web_urls = set()
+                for p in ports:
+                    if p.service in ("HTTP", "HTTP-Alt", "HTTPS", "HTTPS-Alt"):
+                        scheme = "https" if "HTTPS" in p.service else "http"
+                        open_web_urls.add(f"{scheme}://{hostname}:{p.port}")
+                
+                # Also add default HTTP/HTTPS if asset has an http_status
+                if asset.http_status:
+                    open_web_urls.add(f"https://{hostname}")
+                    open_web_urls.add(f"http://{hostname}")
+                
+                asset_criticality = asset.asset_criticality or "medium"
+            
+            # Build tech tags for Nuclei
+            tech_tags = [t.get("name", "").lower().replace(" ", "-") for t in tech_stack if t.get("name")]
+            
+            # Run Nuclei for this single host (verify() already has the global semaphore)
+            targets = list(open_web_urls) if open_web_urls else [hostname]
+            logger.info(f"[EASM/Nuclei] Scanning {hostname} ({len(targets)} URL(s))")
+            
+            raw_nuclei_data = await engine.verify(targets, tags=tech_tags)
+            
+            # Separate tech detections from real vulnerabilities
+            nuclei_findings = []
+            for n in raw_nuclei_data:
+                t_id = str(n.get("template_id", "")).lower()
+                if "wappalyzer" in t_id or t_id.endswith("-detect") or "tech" in t_id:
+                    continue  # Skip tech detections, we already have tech_stack
+                nuclei_findings.append(n)
+            
+            # Write Nuclei findings to DB
+            if nuclei_findings:
+                async with get_tenant_db(tenant_id) as session:
+                    # Severity adjustment helper
+                    def _adjust_severity(base_sev: str) -> str:
+                        levels = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+                        rev_levels = {v: k for k, v in levels.items()}
+                        val = levels.get(base_sev, 2)
+                        if asset_criticality in ("critical", "high"):
+                            val = min(4, val + 1)
+                        elif asset_criticality == "low":
+                            val = max(0, val - 1)
+                        return rev_levels.get(val, base_sev)
+                    
+                    for result_item in nuclei_findings:
+                        issue_type = f"Verified {result_item.get('cve_id', 'Vulnerability')}"
+                        
+                        # Deduplicate: check if finding already exists
+                        existing = await session.execute(
+                            select(Finding).where(
+                                and_(
+                                    Finding.tenant_id == tid,
+                                    Finding.entity == hostname,
+                                    Finding.issue_type == issue_type,
+                                )
+                            )
+                        )
+                        if existing.scalar_one_or_none():
+                            continue
+                        
+                        session.add(Finding(
+                            tenant_id=tid,
+                            severity=_adjust_severity(result_item.get("severity", "high")),
+                            source="ext_scanner",
+                            issue_type=issue_type,
+                            entity=hostname,
+                            tags=["Verified", "Nuclei"],
+                            evidence={
+                                "hostname": hostname,
+                                "confidence": 95,
+                                "description": result_item.get("description"),
+                                "extracted_results": result_item.get("extracted_results"),
+                                "matched_at": result_item.get("matched_at"),
+                                "template_id": result_item.get("template_id"),
+                            },
+                        ))
+                    
+                    # Update asset cve_count
+                    result = await session.execute(
+                        select(EasmAsset).where(
+                            and_(
+                                EasmAsset.tenant_id == tid,
+                                EasmAsset.hostname == hostname,
+                            )
+                        )
+                    )
+                    asset_row = result.scalar_one_or_none()
+                    if asset_row:
+                        asset_row.cve_count = (asset_row.cve_count or 0) + len(nuclei_findings)
+                        asset_row.updated_at = datetime.now(timezone.utc)
+                    
+                    await session.commit()
+                
+                logger.info(f"[EASM/Nuclei] {hostname}: found {len(nuclei_findings)} verified vulnerability(ies)")
+            
+            ok_count += 1
+            
+        except Exception as e:
+            logger.error(f"[EASM/Nuclei] Failed for {hostname}: {e}")
+            fail_count += 1
+        
+        # Force garbage collection between each host to free memory
+        gc.collect()
+    
+    logger.info(f"[EASM/Nuclei] Phase complete: {ok_count} ok, {fail_count} failed")
+    return (ok_count, fail_count)
 
 
 # ── Passive subdomain enumeration ─────────────────────────────────────────────
