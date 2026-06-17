@@ -179,6 +179,122 @@ async def get_easm_overview(
     else:
         grade = "F Grade"
 
+    # ── Calculate top providers/technologies dynamically ──
+    from collections import Counter
+    import json
+    import dns.asyncresolver
+
+    # 1. Top Web Technologies/Hosts
+    web_tech_counter = Counter()
+    async with get_tenant_db(str(tenant_id)) as db:
+        res = await db.execute(
+            select(EasmAsset.tech_stack).where(
+                and_(
+                    EasmAsset.tenant_id == tenant_id,
+                    EasmAsset.asset_type == "web",
+                    EasmAsset.http_status == 200
+                )
+            )
+        )
+        for row in res.scalars().all():
+            for item in (row or []):
+                try:
+                    obj = json.loads(item)
+                    web_tech_counter[obj["name"]] += 1
+                except Exception:
+                    web_tech_counter[item] += 1
+    
+    top_web_techs = [tech for tech, _ in web_tech_counter.most_common(4)]
+
+    # 2. Top Email Providers (detect MX/SPF from scopes)
+    async def detect_email_provider(domain: str) -> str:
+        resolver = dns.asyncresolver.Resolver()
+        resolver.timeout = 1.0
+        resolver.lifetime = 1.0
+        try:
+            answers = await resolver.resolve(domain, 'MX')
+            for rdata in answers:
+                mx_host = rdata.exchange.to_text().lower()
+                if "outlook" in mx_host or "pphosted" in mx_host or "microsoft" in mx_host:
+                    return "Microsoft 365"
+                if "google" in mx_host or "asmtp" in mx_host:
+                    return "Google Workspace"
+                if "mimecast" in mx_host:
+                    return "Mimecast"
+                if "zoho" in mx_host:
+                    return "Zoho Mail"
+        except Exception:
+            pass
+        try:
+            answers = await resolver.resolve(domain, 'TXT')
+            for rdata in answers:
+                txt = "".join([s.decode('utf-8') for s in rdata.strings])
+                if txt.startswith("v=spf1"):
+                    if "outlook.com" in txt or "protection.outlook.com" in txt:
+                        return "Microsoft 365"
+                    if "_spf.google.com" in txt or "google.com" in txt:
+                        return "Google Workspace"
+                    if "mimecast.com" in txt:
+                        return "Mimecast"
+                    if "zoho.com" in txt:
+                        return "Zoho Mail"
+        except Exception:
+            pass
+        return "Custom Mail"
+
+    scopes_result = await session.execute(
+        select(ScanScope.value).where(
+            and_(ScanScope.tenant_id == tenant_id, ScanScope.type == "domain")
+        )
+    )
+    root_domains = [s.lower().strip() for s in scopes_result.scalars().all()]
+    
+    email_providers_set = set()
+    if root_domains:
+        tasks = [detect_email_provider(d) for d in root_domains[:5]]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, str):
+                email_providers_set.add(r)
+    top_email_providers = list(email_providers_set)[:4]
+
+    # 3. Top Infrastructure Providers (ISPs/ASNs from EasmPort)
+    def clean_infra_provider(name: str) -> str:
+        name_lower = name.lower()
+        if "amazon" in name_lower or "aws" in name_lower:
+            return "AWS"
+        if "cloudflare" in name_lower:
+            return "Cloudflare"
+        if "digitalocean" in name_lower or "digital ocean" in name_lower:
+            return "DigitalOcean"
+        if "google" in name_lower:
+            return "Google Cloud"
+        if "microsoft" in name_lower or "azure" in name_lower:
+            return "Azure"
+        if "ovh" in name_lower:
+            return "OVH"
+        if "linode" in name_lower or "akamai" in name_lower:
+            return "Linode"
+        parts = name.split()
+        return " ".join(parts[:2])
+
+    infra_counter = Counter()
+    async with get_tenant_db(str(tenant_id)) as db:
+        res = await db.execute(
+            select(EasmPort.provider)
+            .where(
+                and_(
+                    EasmPort.tenant_id == tenant_id,
+                    EasmPort.provider != None,
+                    EasmPort.provider != "Unknown"
+                )
+            )
+        )
+        for prov in res.scalars().all():
+            infra_counter[clean_infra_provider(prov)] += 1
+            
+    top_infra_providers = [prov for prov, _ in infra_counter.most_common(4)]
+
     # Category counts
     # website_count is calculated above
     infra_count = total_ips
@@ -223,10 +339,26 @@ async def get_easm_overview(
         
         # Categories
         "categories": {
-            "websites": {"total": website_count, "vulnerabilities": high_vulns + medium_vulns},
-            "emails": {"total": 0, "vulnerabilities": 0},
-            "identities": {"total": 0, "vulnerabilities": 0},
-            "infrastructure": {"total": infra_count, "vulnerabilities": critical_vulns + high_vulns},
+            "websites": {
+                "total": website_count, 
+                "vulnerabilities": high_vulns + medium_vulns,
+                "providers": top_web_techs
+            },
+            "emails": {
+                "total": len(root_domains), 
+                "vulnerabilities": brand_email_issues,
+                "providers": top_email_providers
+            },
+            "identities": {
+                "total": 0, 
+                "vulnerabilities": 0,
+                "providers": []
+            },
+            "infrastructure": {
+                "total": infra_count, 
+                "vulnerabilities": critical_vulns + high_vulns,
+                "providers": top_infra_providers
+            },
         }
     }
 

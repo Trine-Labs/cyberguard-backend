@@ -920,6 +920,9 @@ async def _generate_findings(
 
     def _get_base_domain(hn: str, scopes: list[str]) -> str:
         hn_lower = hn.lower().strip()
+        if _is_ip(hn_lower):
+            return hn_lower
+
         matching_scopes = []
         for d in scopes:
             if hn_lower == d or hn_lower.endswith("." + d):
@@ -1087,45 +1090,46 @@ async def _generate_findings(
             },
         })
 
-    # Email Security (SPF / DMARC)
-    if not email_security.get("dmarc"):
-        findings_to_create.append({
-            "severity": _adjust_severity("medium"),
-            "source": "ext_scanner",
-            "issue_type": "Missing DMARC Record",
-            "entity": base_domain,
-            "evidence": {
-                "hostname": hostname,
-                "affected_subdomains": [hostname],
-                "description": "No DMARC record was found, making the domain vulnerable to email spoofing.",
-            },
-        })
-    elif email_security.get("dmarc_policy") == "none":
-        findings_to_create.append({
-            "severity": _adjust_severity("low"),
-            "source": "ext_scanner",
-            "issue_type": "DMARC Policy is 'None'",
-            "entity": base_domain,
-            "evidence": {
-                "hostname": hostname,
-                "dmarc_record": email_security["dmarc"],
-                "affected_subdomains": [hostname],
-                "description": "DMARC is configured but the policy is set to 'none', meaning spoofed emails are not blocked.",
-            },
-        })
-        
-    if not email_security.get("spf"):
-        findings_to_create.append({
-            "severity": _adjust_severity("medium"),
-            "source": "ext_scanner",
-            "issue_type": "Missing SPF Record",
-            "entity": base_domain,
-            "evidence": {
-                "hostname": hostname,
-                "affected_subdomains": [hostname],
-                "description": "No SPF record was found, allowing unauthorized senders to forge emails from this domain.",
-            },
-        })
+    # Email Security (SPF / DMARC) - only run on domain names, not IP addresses
+    if not _is_ip(hostname):
+        if not email_security.get("dmarc"):
+            findings_to_create.append({
+                "severity": _adjust_severity("medium"),
+                "source": "ext_scanner",
+                "issue_type": "Missing DMARC Record",
+                "entity": base_domain,
+                "evidence": {
+                    "hostname": hostname,
+                    "affected_subdomains": [hostname],
+                    "description": "No DMARC record was found, making the domain vulnerable to email spoofing.",
+                },
+            })
+        elif email_security.get("dmarc_policy") == "none":
+            findings_to_create.append({
+                "severity": _adjust_severity("low"),
+                "source": "ext_scanner",
+                "issue_type": "DMARC Policy is 'None'",
+                "entity": base_domain,
+                "evidence": {
+                    "hostname": hostname,
+                    "dmarc_record": email_security["dmarc"],
+                    "affected_subdomains": [hostname],
+                    "description": "DMARC is configured but the policy is set to 'none', meaning spoofed emails are not blocked.",
+                },
+            })
+            
+        if not email_security.get("spf"):
+            findings_to_create.append({
+                "severity": _adjust_severity("medium"),
+                "source": "ext_scanner",
+                "issue_type": "Missing SPF Record",
+                "entity": base_domain,
+                "evidence": {
+                    "hostname": hostname,
+                    "affected_subdomains": [hostname],
+                    "description": "No SPF record was found, allowing unauthorized senders to forge emails from this domain.",
+                },
+            })
 
     # Deduplicate findings_to_create by entity + issue_type
     unique_findings_map = {}
@@ -1296,7 +1300,7 @@ async def _scan_domain_inner(
             sensitive_findings.extend(findings)
         
     # Email security probe
-    do_email = not modules or "email" in modules
+    do_email = (not modules or "email" in modules) and not _is_ip(hostname)
     email_security = await _check_email_security(hostname) if do_email else {}
 
     is_admin = any(kw in hostname for kw in ["admin", "portal", "manage", "cpanel", "wp-admin", "phpmyadmin"])
@@ -2052,6 +2056,14 @@ async def _hackertarget_subdomains(domain: str) -> list[str]:
 def _is_cidr(value: str) -> bool:
     try:
         ipaddress.ip_network(value, strict=False)
+        return True
+    except ValueError:
+        return False
+
+
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
         return True
     except ValueError:
         return False
