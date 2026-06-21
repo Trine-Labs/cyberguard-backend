@@ -2129,13 +2129,28 @@ async def _run_nuclei_phase(tenant_id: str, domains: list[str], modules: list[st
             
             raw_nuclei_data = await engine.verify(targets_list, tags=tags_list)
             
-            # Filter detections — only skip pure tech-detection templates with no security value
+            # Filter detections and deduplicate in-memory to prevent duplicates in the same transaction
             nuclei_findings = []
+            seen_issues = set()
             for n in raw_nuclei_data:
                 t_id = str(n.get("template_id", "")).lower()
                 # Skip wappalyzer-style pure tech-detect templates (no vuln)
-                if "wappalyzer" in t_id or t_id.endswith("-detect"):
+                if "wappalyzer" in t_id:
                     continue
+                
+                matched_at = n.get("matched_at", "")
+                finding_host = _extract_hostname(matched_at, batch_domains[0]) if batch_domains else ""
+                if not finding_host:
+                    continue
+                    
+                issue_type = f"Verified {n.get('cve_id', 'Vulnerability')}"
+                key = (finding_host, issue_type)
+                
+                if key in seen_issues:
+                    continue
+                
+                seen_issues.add(key)
+                n["_resolved_host"] = finding_host # cache it for the next loop
                 nuclei_findings.append(n)
                 
             # Write findings to DB in batch session
@@ -2143,15 +2158,12 @@ async def _run_nuclei_phase(tenant_id: str, domains: list[str], modules: list[st
                 async with get_tenant_db(tenant_id) as session:
                     # Map each finding back to its correct hostname
                     for result_item in nuclei_findings:
-                        matched_at = result_item.get("matched_at", "")
                         t_id = str(result_item.get("template_id", "")).lower()
 
-                        if result_item.get("severity", "info").lower() == "info":
-                            if not any(k in t_id for k in ("exposure", "api", "leak", "metric")):
-                                continue
+                        # Allow info findings to be processed normally
 
-                        # Try to resolve to a host in the current batch
-                        finding_host = _extract_hostname(matched_at, batch_domains[0])
+                        finding_host = result_item.get("_resolved_host", "")
+                        logger.info(f"[EASM/Nuclei] Mapped finding {t_id} to host {finding_host}")
                         
                         # Find the correct criticality or fallback
                         host_info = asset_info_map.get(finding_host, {"criticality": "medium"})
@@ -2181,6 +2193,7 @@ async def _run_nuclei_phase(tenant_id: str, domains: list[str], modules: list[st
                         )
                         existing_row = existing.scalars().first()
                         if existing_row:
+                            logger.info(f"[EASM/Nuclei] Deduplicating existing finding {issue_type} for {finding_host}")
                             existing_row.last_seen_at = datetime.now(timezone.utc)
                             if existing_row.status == "resolved":
                                 existing_row.status = "open"
@@ -2206,6 +2219,7 @@ async def _run_nuclei_phase(tenant_id: str, domains: list[str], modules: list[st
                         seq_result = await session.execute(_text("SELECT nextval('findings_seq')"))
                         seq_num = seq_result.scalar()
                         
+                        logger.info(f"[EASM/Nuclei] Adding new finding {issue_type} for {finding_host} with severity {result_item.get('severity')}")
                         session.add(Finding(
                             tenant_id=tid,
                             finding_num=seq_num,

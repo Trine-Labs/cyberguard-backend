@@ -16,7 +16,7 @@ _NUCLEI_SEM = asyncio.Semaphore(1)
 MAX_TEMPLATES_PER_PHASE = 80
 
 # Hard timeout per Nuclei subprocess (seconds)
-NUCLEI_TIMEOUT = 90
+NUCLEI_TIMEOUT = 600
 
 class NucleiVerificationEngine:
     def __init__(self):
@@ -307,36 +307,38 @@ class NucleiVerificationEngine:
         temp_dir = self.base_dir / "tmp"
         temp_dir.mkdir(exist_ok=True)
 
-        fd, temp_file_path = tempfile.mkstemp(suffix="_nuclei_targets.txt", dir=str(temp_dir))
+        fd_tgt, temp_targets_path = tempfile.mkstemp(suffix="_nuclei_targets.txt", dir=str(temp_dir))
+        fd_tpl, temp_templates_path = tempfile.mkstemp(suffix="_nuclei_templates.txt", dir=str(temp_dir))
         try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            with os.fdopen(fd_tgt, 'w', encoding='utf-8') as f:
                 for target in targets:
                     f.write(f"{target}\n")
 
-            # Batch template paths to prevent OOM — kept at 50 for 512MB Render
-            TEMPLATE_BATCH_SIZE = 50
-            template_batches = [template_paths[i:i + TEMPLATE_BATCH_SIZE] for i in range(0, len(template_paths), TEMPLATE_BATCH_SIZE)]
+            with os.fdopen(fd_tpl, 'w', encoding='utf-8') as f:
+                for path in template_paths:
+                    f.write(f"{path}\n")
 
-            results = []
-            for idx, batch_paths in enumerate(template_batches):
-                batch_results = await self._run_nuclei(temp_file_path, tags, batch_paths, is_dast)
-                results.extend(batch_results)
+            # Run Nuclei once for all templates in this phase, allowing Nuclei's native
+            # -bulk-size and -c flags to handle memory management efficiently
+            results = await self._run_nuclei(temp_targets_path, temp_templates_path, tags, len(template_paths), is_dast)
 
             return results
         finally:
-            try:
-                os.remove(temp_file_path)
-            except Exception:
-                pass
+            for temp_file in [temp_targets_path, temp_templates_path]:
+                try:
+                    os.remove(temp_file)
+                except Exception:
+                    pass
 
-    async def _run_nuclei(self, targets_file: str, tags: str, batch_paths: list[str], is_dast: bool = False) -> list[dict]:
-        """Run Nuclei command line tool using a targets file and explicit -t template paths."""
+    async def _run_nuclei(self, targets_file: str, templates_file: str, tags: str, num_templates: int, is_dast: bool = False) -> list[dict]:
+        """Run Nuclei command line tool using a targets file and a templates list file."""
         results = []
         export_file = f"{targets_file}.json"
 
         cmd = [
             str(self.nuclei_bin).replace(chr(92), '/'),
             "-list", targets_file.replace(chr(92), '/'),
+            "-t", templates_file.replace(chr(92), '/'),
             "-json-export", export_file.replace(chr(92), '/'),
             "-silent",
             "-nc",
@@ -353,15 +355,12 @@ class NucleiVerificationEngine:
             "-rsr", "1048576"   # Limit response size read to 1MB to save RAM buffers
         ]
 
-        # The -dast flag causes Nuclei to ignore our explicitly batched -t templates
-        # so we rely strictly on the batch_paths which point to the dast templates
-        
-        # Pass each template path as a separate -t argument
-        for path in batch_paths:
-            cmd.extend(["-t", path.replace(chr(92), '/')])
+        # Pass -dast flag if running DAST templates
+        if is_dast:
+            cmd.append("-dast")
 
         try:
-            logger.info(f"[Nuclei] Running batch scan | tags={tags} | templates={len(batch_paths)}")
+            logger.info(f"[Nuclei] Running scan | tags={tags} | templates={num_templates}")
             logger.debug(f"[Nuclei DEBUG] Command: {' '.join(cmd)}")
 
             def run_nuclei():
