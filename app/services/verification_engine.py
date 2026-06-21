@@ -200,22 +200,22 @@ class NucleiVerificationEngine:
                 else:
                     logger.info(f"[Nuclei] No matching Phase 2 templates found for tags {phase2_tags}. Skipping Phase 2.")
 
-            # ── Phase 3: DAST — only if explicitly requested ──
-            dast_keywords = {"dast", "sqli", "xss", "lfi", "idor", "ssti", "rce", "injection", "redirect"}
-            if any(t.lower() in dast_keywords for t in tags):
-                phase3_tags = "dast,sqli,xss,ssti,lfi,rce,injection,idor,redirect"
-                phase3_paths = self._find_matching_templates(
-                    ["dast"],
-                    phase3_tags
-                )
+            # ── Phase 3: DAST (Dynamic Application Security Testing) ──
+            # Always runs — but capped at 20 templates (max-request ≤ 50 filter already applies)
+            # This keeps DAST fast (~30-60s) while still catching SQLi/XSS/LFI on apps like Juice Shop
+            phase3_tags = "dast,sqli,xss,ssti,lfi,rce,injection,idor,redirect"
+            phase3_paths = self._find_matching_templates(
+                ["dast"],
+                phase3_tags
+            )
+            # Hard cap DAST at 20 templates — DAST templates are heavier per request
+            phase3_paths = phase3_paths[:20]
 
-                if phase3_paths:
-                    r3 = await self._run_nuclei_batch(targets, phase3_tags, phase3_paths, is_dast=True)
-                    all_results.extend(r3)
-                else:
-                    logger.info("[Nuclei] No matching Phase 3 templates found. Skipping Phase 3.")
+            if phase3_paths:
+                r3 = await self._run_nuclei_batch(targets, phase3_tags, phase3_paths, is_dast=True)
+                all_results.extend(r3)
             else:
-                logger.info("[Nuclei] DAST tags not explicitly requested. Skipping Phase 3.")
+                logger.info("[Nuclei] No matching Phase 3 DAST templates found. Skipping Phase 3.")
 
             # Deduplicate by template_id + matched_at
             seen = set()
