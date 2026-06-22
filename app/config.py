@@ -42,6 +42,8 @@ class Settings(BaseSettings):
         "https://graph.microsoft.com/AuditLog.Read.All "
         "https://graph.microsoft.com/Policy.Read.All "
         "https://graph.microsoft.com/Directory.Read.All "
+        "https://graph.microsoft.com/Reports.Read.All "
+        "https://graph.microsoft.com/MailboxSettings.Read "
         "offline_access"
     )
 

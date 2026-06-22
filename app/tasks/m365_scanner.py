@@ -8,7 +8,7 @@ from app.models.m365_credential import M365Credential
 from app.models.finding import Finding
 from app.services.m365_service import refresh_access_token
 from app.services.m365_graph_client import M365GraphClient
-from app.services.rules_engine import check_illicit_consent_grants
+from app.services.rules_engine import run_all_rules, get_admin_user_ids
 from app.services.findings_service import upsert_m365_findings
 from app.services.crypto_service import decrypt_token, EncryptedBlob
 from app.config import get_settings
@@ -37,8 +37,25 @@ async def _process_tenant(session, cred: M365Credential):
             directory_roles = await client.get_directory_roles()
             ca_policies = await client.get_conditional_access_policies()
             mfa_details = await client.get_mfa_details()
+            
+            # Fetch mailbox rules for admins to save API calls
+            admin_ids = get_admin_user_ids(directory_roles)
+            admin_users = [u for u in users if u.get("id") in admin_ids]
+            mailbox_rules = await client.get_mailbox_rules(admin_users)
 
-            findings = check_illicit_consent_grants(grants, service_principals)
+            # Get domains from tenant or use placeholder/empty for MVP
+            verified_domains = [] 
+
+            findings = run_all_rules(
+                users=users,
+                directory_roles=directory_roles,
+                mfa_details=mfa_details,
+                ca_policies=ca_policies,
+                grants=grants,
+                service_principals=service_principals,
+                mailbox_rules=mailbox_rules,
+                verified_domains=verified_domains
+            )
             
             await upsert_m365_findings(session, cred.tenant_id, findings)
             

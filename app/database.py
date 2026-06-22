@@ -96,6 +96,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+import asyncio
+
 async def set_rls_tenant(session: AsyncSession, tenant_id: str) -> None:
     """
     Sets the PostgreSQL session-level variable used by RLS policies.
@@ -103,10 +105,19 @@ async def set_rls_tenant(session: AsyncSession, tenant_id: str) -> None:
     Uses transaction-local setting (third param = true) so it auto-clears
     after each transaction — no cross-tenant leakage risk.
     """
-    await session.execute(
-        text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
-        {"tenant_id": str(tenant_id)},
-    )
+    for attempt in range(3):
+        try:
+            await session.execute(
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
+            )
+            return
+        except Exception as e:
+            if "getaddrinfo" in str(e) or "11001" in str(e) or "ConnectionRefused" in str(e):
+                if attempt < 2:
+                    await asyncio.sleep(1 * (attempt + 1))
+                    continue
+            raise
 
 
 @asynccontextmanager

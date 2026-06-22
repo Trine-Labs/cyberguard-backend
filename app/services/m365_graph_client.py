@@ -34,7 +34,7 @@ class M365GraphClient:
         self.db_session.add(audit_entry)
         await self.db_session.commit()
 
-    async def _get(self, endpoint: str) -> Dict[str, Any]:
+    async def _get(self, endpoint: str, silent_errors: bool = False) -> Dict[str, Any]:
         """Perform a GET request to Graph API with audit logging."""
         url = f"{self.BASE_URL}{endpoint}"
         try:
@@ -55,7 +55,8 @@ class M365GraphClient:
             
             return data
         except Exception as e:
-            logger.error(f"Graph API request failed: {e}")
+            if not silent_errors:
+                logger.error(f"Graph API request failed: {e}")
             raise
 
     async def get_service_principals(self) -> List[Dict[str, Any]]:
@@ -81,13 +82,32 @@ class M365GraphClient:
         pass
 
     async def get_users(self) -> List[Dict[str, Any]]:
-        """Fetch basic user directory information."""
+        """Fetch basic user directory information with signInActivity."""
         try:
-            data = await self._get("/users?$select=id,displayName,userPrincipalName")
+            data = await self._get("/users?$select=id,displayName,userPrincipalName,accountEnabled,signInActivity")
             return data.get("value", [])
         except Exception as e:
             logger.warning(f"Could not fetch users: {e}")
             return []
+
+    async def get_mailbox_rules(self, users: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Fetch inbox rules for users (typically privileged ones to save API calls)."""
+        rules_data = []
+        # Limit to first 20 users for MVP to avoid rate limiting
+        for user in users[:20]:
+            try:
+                user_id = user.get("id")
+                data = await self._get(f"/users/{user_id}/mailFolders/inbox/messageRules", silent_errors=True)
+                rules = data.get("value", [])
+                if rules:
+                    rules_data.append({
+                        "user_id": user_id,
+                        "upn": user.get("userPrincipalName"),
+                        "rules": rules
+                    })
+            except Exception as e:
+                pass # Usually permission denied if missing MailboxSettings.Read
+        return rules_data
 
     async def get_directory_roles(self) -> List[Dict[str, Any]]:
         """Fetch directory roles and their active members."""
@@ -120,7 +140,7 @@ class M365GraphClient:
     async def get_mfa_details(self) -> List[Dict[str, Any]]:
         """Attempt to fetch MFA registration details for all users (requires beta endpoint and premium)."""
         try:
-            url = f"https://graph.microsoft.com/beta/reports/credentialUserRegistrationDetails"
+            url = f"https://graph.microsoft.com/beta/reports/authenticationMethods/userRegistrationDetails"
             response = await self.client.get(url)
             
             status_code = response.status_code
@@ -129,14 +149,19 @@ class M365GraphClient:
             if status_code == 200:
                 data = response.json()
                 records = len(data.get("value", []))
+                
+            with open("debug_mfa.txt", "w", encoding="utf-8") as f:
+                f.write(f"status: {status_code}\nbody: {response.text}\nheaders: {response.headers}")
             
-            await self._audit_log("/beta/reports/credentialUserRegistrationDetails", records, status_code)
+            await self._audit_log("/beta/reports/authenticationMethods/userRegistrationDetails", records, status_code)
             
             if status_code == 200:
                 return data.get("value", [])
             return []
         except Exception as e:
             logger.warning(f"Could not fetch MFA details: {e}")
+            with open("debug_mfa_exception.txt", "w", encoding="utf-8") as f:
+                f.write(str(e))
             return []
 
     async def close(self):
