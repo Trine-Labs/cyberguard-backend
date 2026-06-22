@@ -10,6 +10,7 @@ from app.models.audit_trail import AuditTrail
 from app.models.scan_job import ScanJob
 from app.models.easm import EasmAsset, EasmPort, EasmCertificate
 from app.models.finding import Finding
+from app.models.m365_audit_log import M365AuditLog
 
 __all__ = [
     "Tenant",
@@ -22,4 +23,5 @@ __all__ = [
     "EasmPort",
     "EasmCertificate",
     "Finding",
+    "M365AuditLog",
 ]

@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import String, DateTime, ForeignKey, func, ARRAY
-from sqlalchemy.dialects.postgresql import UUID, ENUM
+from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -36,6 +36,9 @@ class M365Credential(Base):
     )
     revoked_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    hub_state: Mapped[Optional[dict]] = mapped_column(
+        JSONB, nullable=True
     )
 
     # Relationships

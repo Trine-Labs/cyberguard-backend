@@ -235,6 +235,46 @@ async def get_m365_status(
     }
 
 
+@router.get("/hub")
+async def get_m365_hub_state(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """Return the M365 Hub state from the database. Trigger scan if empty."""
+    await set_rls_tenant(session, str(current_user.tenant_id))
+    
+    result = await session.execute(
+        select(M365Credential).where(
+            M365Credential.tenant_id == current_user.tenant_id
+        )
+    )
+    cred = result.scalar_one_or_none()
+    
+    if not cred:
+        return {"tenant_id": str(current_user.tenant_id), "users": [], "directory_roles": [], "ca_policies": [], "mfa_details": [], "oauth2_grants": [], "service_principals": [], "findings": []}
+        
+    state = cred.hub_state
+    
+    # If state is missing, trigger a background task to fetch it immediately
+    if not state:
+        from app.tasks.m365_scanner import run_m365_scan_background
+        background_tasks.add_task(run_m365_scan_background, str(current_user.tenant_id))
+        
+        return {
+            "tenant_id": str(current_user.tenant_id),
+            "users": [],
+            "directory_roles": [],
+            "ca_policies": [],
+            "mfa_details": [],
+            "oauth2_grants": [],
+            "service_principals": [],
+            "findings": []
+        }
+        
+    return state
+
+
 @router.delete("/disconnect")
 async def disconnect_m365(
     request: Request,
@@ -269,3 +309,26 @@ async def disconnect_m365(
     )
     
     return {"message": "Microsoft 365 connection has been disconnected."}
+
+@router.post("/sync")
+async def sync_m365_hub_state(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Manually trigger a rescan of the M365 environment.
+    """
+    await set_rls_tenant(session, str(current_user.tenant_id))
+    result = await session.execute(
+        select(M365Credential).where(M365Credential.tenant_id == current_user.tenant_id)
+    )
+    cred = result.scalar_one_or_none()
+    
+    if not cred or cred.token_status != "active":
+        raise HTTPException(status_code=400, detail="M365 not connected or token expired.")
+        
+    from app.tasks.m365_scanner import run_m365_scan_background
+    background_tasks.add_task(run_m365_scan_background, str(current_user.tenant_id))
+    
+    return {"status": "sync_started"}
