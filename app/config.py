@@ -44,6 +44,10 @@ class Settings(BaseSettings):
         "https://graph.microsoft.com/Directory.Read.All "
         "https://graph.microsoft.com/Reports.Read.All "
         "https://graph.microsoft.com/MailboxSettings.Read "
+        "https://graph.microsoft.com/RoleManagement.Read.All "
+        "https://graph.microsoft.com/UserAuthenticationMethod.Read.All "
+        "https://graph.microsoft.com/SharePointTenantSettings.Read.All "
+        "https://graph.microsoft.com/IdentityRiskyUser.Read.All "
         "offline_access"
     )
 

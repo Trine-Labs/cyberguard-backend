@@ -5,16 +5,19 @@ Reads from the findings table (populated by easm_scanner + m365 checks).
 """
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi_cache.decorator import cache
 from app.cache_utils import tenant_key_builder
 from pydantic import BaseModel
+import io
 
 from app.dependencies import get_db, get_current_user, require_admin
 from app.database import set_rls_tenant
 from app.models.user import User
 from app.models.finding import Finding
+from app.models.tenant import Tenant
 
 router = APIRouter(prefix="/api/v1/findings", tags=["Findings"])
 
@@ -194,3 +197,51 @@ async def update_finding_status(
     finding.updated_at = datetime.now(timezone.utc)
 
     return {"message": f"Status updated to '{body.status}'", "finding_id": str(finding.id)}
+
+
+@router.get("/export/pdf")
+async def export_findings_pdf(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+    status: Optional[str] = Query(None, description="Filter by status (open/resolved/all)"),
+):
+    """
+    Generate and stream a full security audit PDF report for the tenant.
+    Includes all findings sorted by severity, with evidence details.
+    """
+    from app.services.pdf_service import generate_audit_pdf
+    from datetime import datetime, timezone
+
+    await set_rls_tenant(session, str(current_user.tenant_id))
+
+    # Fetch tenant name
+    tenant = await session.get(Tenant, current_user.tenant_id)
+    org_name = tenant.org_name if tenant else "Unknown Organisation"
+
+    # Fetch all findings (no pagination — full export)
+    q = select(Finding).where(Finding.tenant_id == current_user.tenant_id)
+    if status and status != "all":
+        q = q.where(Finding.status == status)
+    q = q.order_by(Finding.severity, Finding.created_at.desc())
+
+    result = await session.execute(q)
+    findings_orm = result.scalars().all()
+
+    findings_data = [_finding_to_dict(f) for f in findings_orm]
+
+    # Generate PDF in a thread pool to avoid blocking the event loop
+    import asyncio
+    loop = asyncio.get_event_loop()
+    pdf_bytes = await loop.run_in_executor(
+        None,
+        lambda: generate_audit_pdf(org_name=org_name, findings=findings_data)
+    )
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"cyberguard_audit_{org_name.lower().replace(' ', '_')}_{ts}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

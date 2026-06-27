@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, delete
 
 from app.dependencies import get_db, get_current_user, require_admin
 from app.database import set_rls_tenant
@@ -18,6 +18,7 @@ from app.models.tenant import Tenant
 from app.models.m365_credential import M365Credential
 from app.models.scan_job import ScanJob
 from app.models.scope import ScanScope
+from app.models.finding import Finding
 from app.services.m365_service import build_admin_consent_url, exchange_code_for_tokens
 from app.services.crypto_service import encrypt_token, EncryptedBlob
 from app.services.audit_service import log_action, AuditAction
@@ -300,6 +301,16 @@ async def disconnect_m365(
     cred.token_status = "revoked"
     cred.revoked_at = datetime.now(timezone.utc)
     
+    # Delete all SSPM findings related to M365 when disconnected
+    await session.execute(
+        delete(Finding).where(
+            and_(
+                Finding.tenant_id == current_user.tenant_id,
+                Finding.source == "m365"
+            )
+        )
+    )
+    
     await log_action(
         session=session,
         tenant_id=current_user.tenant_id,
@@ -308,7 +319,9 @@ async def disconnect_m365(
         metadata={"ms_tenant_id": cred.ms_tenant_id},
     )
     
-    return {"message": "Microsoft 365 connection has been disconnected."}
+    await session.commit()
+    
+    return {"message": "Microsoft 365 connection has been disconnected and related findings cleared."}
 
 @router.post("/sync")
 async def sync_m365_hub_state(
