@@ -165,18 +165,32 @@ class M365GraphClient:
 
     async def get_pim_eligible_assignments(self) -> List[Dict[str, Any]]:
         """
-        Fetch PIM eligible role assignments (requires RoleManagement.Read.All).
+        Fetch PIM eligible role assignments (requires RoleManagement.Read.All + Entra ID P2).
         Returns users who COULD elevate to admin — not currently active admins.
+        A 400 response means the tenant does not have an Entra ID P2 license — this is expected
+        and is handled silently. A 403 would indicate a missing permission grant.
         """
+        endpoint = (
+            "/roleManagement/directory/roleEligibilityScheduleInstances"
+            "?$select=id,roleDefinitionId,principalId,directoryScopeId,status"
+            "&$expand=principal($select=displayName,userPrincipalName),roleDefinition($select=displayName)"
+        )
+        url = f"{self.BASE_URL}{endpoint}"
         try:
-            data = await self._get(
-                "/roleManagement/directory/roleEligibilityScheduleInstances"
-                "?$select=id,roleDefinitionId,principalId,directoryScopeId,status"
-                "&$expand=principal($select=displayName,userPrincipalName),roleDefinition($select=displayName)"
-            )
+            response = await self.client.get(url)
+            status_code = response.status_code
+            await self._audit_log(endpoint, 0, status_code)
+            if status_code == 400:
+                logger.debug("[SSPM] PIM eligible assignments skipped — Entra ID P2 license not available on this tenant.")
+                return []
+            if status_code == 403:
+                logger.warning("[SSPM] PIM eligible assignments: missing RoleManagement.Read.All permission or admin consent.")
+                return []
+            response.raise_for_status()
+            data = response.json()
             return data.get("value", [])
         except Exception as e:
-            logger.warning(f"Could not fetch PIM eligible assignments (requires RoleManagement.Read.All): {e}")
+            logger.debug(f"[SSPM] Could not fetch PIM eligible assignments: {e}")
             return []
 
     # ─── MFA & Authentication ─────────────────────────────────────────────────
@@ -452,17 +466,32 @@ class M365GraphClient:
 
         Risk detections: leaked credentials, anonymous IP, atypical travel,
         malware-linked IP, impossible travel, password spray, suspicious sign-in.
+
+        A 400 response means the tenant does not have an Entra ID P2 license — this is expected
+        and is handled silently. A 403 would indicate a missing permission grant.
         """
+        endpoint = (
+            "/identityProtection/riskyUsers"
+            "?$filter=riskState eq 'atRisk'"
+            "&$select=id,userPrincipalName,displayName,riskLevel,riskState,"
+            "riskDetail,riskLastUpdatedDateTime"
+        )
+        url = f"{self.BASE_URL}{endpoint}"
         try:
-            data = await self._get(
-                "/identityProtection/riskyUsers"
-                "?$filter=riskState eq 'atRisk'"
-                "&$select=id,userPrincipalName,displayName,riskLevel,riskState,"
-                "riskDetail,riskLastUpdatedDateTime"
-            )
+            response = await self.client.get(url)
+            status_code = response.status_code
+            await self._audit_log(endpoint, 0, status_code)
+            if status_code == 400:
+                logger.debug("[SSPM] Risky users skipped — Entra ID P2 license not available on this tenant.")
+                return []
+            if status_code == 403:
+                logger.warning("[SSPM] Risky users: missing IdentityRiskyUser.Read.All permission or admin consent.")
+                return []
+            response.raise_for_status()
+            data = response.json()
             return data.get("value", [])
         except Exception as e:
-            logger.warning(f"Could not fetch risky users (requires IdentityRiskyUser.Read.All + P2): {e}")
+            logger.debug(f"[SSPM] Could not fetch risky users: {e}")
             return []
 
     async def close(self):
