@@ -3,18 +3,21 @@ CyberGuard -- Findings Router
 Unified security findings from all sources (M365 + EASM scanner).
 Reads from the findings table (populated by easm_scanner + m365 checks).
 """
+import io
+import time
+import asyncio
 from typing import Optional
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, and_, or_, cast, String, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi_cache.decorator import cache
 from app.cache_utils import tenant_key_builder
 from pydantic import BaseModel
-import io
 
 from app.dependencies import get_db, get_current_user, require_admin
-from app.database import set_rls_tenant
+from app.database import set_rls_tenant, get_tenant_db
 from app.models.user import User
 from app.models.finding import Finding
 from app.models.tenant import Tenant
@@ -43,6 +46,11 @@ class StatusUpdateRequest(BaseModel):
     status: str  # open | resolved | accepted_risk | false_positive
 
 
+class AIAnalystRequest(BaseModel):
+    industry_context: Optional[str] = "Moroccan Banking Sector"
+    top_n: Optional[int] = 20
+
+
 @router.get("")
 @cache(expire=60, key_builder=tenant_key_builder)
 async def list_findings(
@@ -56,11 +64,8 @@ async def list_findings(
     search: Optional[str] = Query(None),
 ):
     """Paginated, filterable findings list from DB."""
-    import time
-    print("\n--- FINDINGS API DEBUG ---")
     t0 = time.time()
     await set_rls_tenant(session, str(current_user.tenant_id))
-    print(f"[Debug] set_rls_tenant took {time.time() - t0:.4f}s")
 
     q = select(Finding).where(Finding.tenant_id == current_user.tenant_id)
 
@@ -78,10 +83,6 @@ async def list_findings(
             )
         )
 
-    import asyncio
-    from app.database import get_tenant_db
-    from sqlalchemy import cast, String
-
     async def fetch_total():
         async with get_tenant_db(str(current_user.tenant_id)) as db:
             return await db.scalar(select(func.count(Finding.id)).where(q.whereclause)) or 0
@@ -96,7 +97,6 @@ async def list_findings(
 
     async def fetch_page():
         async with get_tenant_db(str(current_user.tenant_id)) as db:
-            from sqlalchemy import case
             severity_order = case(
                 (Finding.severity == "critical", 0),
                 (Finding.severity == "high", 1),
@@ -112,16 +112,13 @@ async def list_findings(
             res = await db.execute(page_q)
             return res.scalars().all()
 
-    t_gather = time.time()
     total, sev_map, findings = await asyncio.gather(
         fetch_total(),
         fetch_counts(),
         fetch_page()
     )
-    print(f"[Debug] Scatter-Gather execution took {time.time() - t_gather:.4f}s")
     open_count = sum(sev_map.values())
     
-    t4 = time.time()
     ret = {
         "findings": [_finding_to_dict(f) for f in findings],
         "total": total,
@@ -135,9 +132,89 @@ async def list_findings(
             "open": open_count,
         },
     }
-    print(f"[Debug] serialization took {time.time() - t4:.4f}s")
-    print(f"[Debug] TOTAL API execution took {time.time() - t0:.4f}s")
     return ret
+
+
+@router.post("/ai-analyst/synthesize")
+async def synthesize_ai_analyst(
+    body: AIAnalystRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Module 5: AI Analyst Layer
+    Takes deterministic Findings for the tenant, strips PII, and generates an
+    executive-ready English synthesis with strict DB finding ID validation.
+    """
+    from app.services.ai_analyst import run_ai_analyst_pipeline
+
+    await set_rls_tenant(session, str(current_user.tenant_id))
+
+    # Fetch top findings for the tenant ordered by severity
+    q = (
+        select(Finding)
+        .where(and_(Finding.tenant_id == current_user.tenant_id, Finding.status == "open"))
+        .order_by(Finding.severity, Finding.created_at.desc())
+        .limit(body.top_n or 20)
+    )
+    result = await session.execute(q)
+    findings_orm = result.scalars().all()
+    findings_data = [_finding_to_dict(f) for f in findings_orm]
+
+    try:
+        synthesis = await run_ai_analyst_pipeline(
+            findings=findings_data,
+            industry_context=body.industry_context or "Moroccan Banking Sector"
+        )
+        return synthesis
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI Analyst execution failed: {str(e)}")
+
+
+@router.get("/export/pdf")
+async def export_findings_pdf(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+    status: Optional[str] = Query(None, description="Filter by status (open/resolved/all)"),
+):
+    """
+    Generate and stream a full security audit PDF report for the tenant.
+    Includes all findings sorted by severity, with evidence details.
+    """
+    from app.services.pdf_service import generate_audit_pdf
+
+    await set_rls_tenant(session, str(current_user.tenant_id))
+
+    # Fetch tenant name
+    tenant = await session.get(Tenant, current_user.tenant_id)
+    org_name = tenant.org_name if tenant else "Unknown Organisation"
+
+    # Fetch all findings (no pagination — full export)
+    q = select(Finding).where(Finding.tenant_id == current_user.tenant_id)
+    if status and status != "all":
+        q = q.where(Finding.status == status)
+    q = q.order_by(Finding.severity, Finding.created_at.desc())
+
+    result = await session.execute(q)
+    findings_orm = result.scalars().all()
+
+    findings_data = [_finding_to_dict(f) for f in findings_orm]
+
+    # Generate PDF in a thread pool to avoid blocking the event loop
+    loop = asyncio.get_event_loop()
+    pdf_bytes = await loop.run_in_executor(
+        None,
+        lambda: generate_audit_pdf(org_name=org_name, findings=findings_data)
+    )
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"cyberguard_audit_{org_name.lower().replace(' ', '_')}_{ts}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{finding_id}")
@@ -190,58 +267,9 @@ async def update_finding_status(
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
 
-    from datetime import datetime, timezone
     finding.status = body.status
     if body.status == "resolved":
         finding.resolved_at = datetime.now(timezone.utc)
     finding.updated_at = datetime.now(timezone.utc)
 
     return {"message": f"Status updated to '{body.status}'", "finding_id": str(finding.id)}
-
-
-@router.get("/export/pdf")
-async def export_findings_pdf(
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
-    status: Optional[str] = Query(None, description="Filter by status (open/resolved/all)"),
-):
-    """
-    Generate and stream a full security audit PDF report for the tenant.
-    Includes all findings sorted by severity, with evidence details.
-    """
-    from app.services.pdf_service import generate_audit_pdf
-    from datetime import datetime, timezone
-
-    await set_rls_tenant(session, str(current_user.tenant_id))
-
-    # Fetch tenant name
-    tenant = await session.get(Tenant, current_user.tenant_id)
-    org_name = tenant.org_name if tenant else "Unknown Organisation"
-
-    # Fetch all findings (no pagination — full export)
-    q = select(Finding).where(Finding.tenant_id == current_user.tenant_id)
-    if status and status != "all":
-        q = q.where(Finding.status == status)
-    q = q.order_by(Finding.severity, Finding.created_at.desc())
-
-    result = await session.execute(q)
-    findings_orm = result.scalars().all()
-
-    findings_data = [_finding_to_dict(f) for f in findings_orm]
-
-    # Generate PDF in a thread pool to avoid blocking the event loop
-    import asyncio
-    loop = asyncio.get_event_loop()
-    pdf_bytes = await loop.run_in_executor(
-        None,
-        lambda: generate_audit_pdf(org_name=org_name, findings=findings_data)
-    )
-
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-    filename = f"cyberguard_audit_{org_name.lower().replace(' ', '_')}_{ts}.pdf"
-
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )

@@ -313,7 +313,7 @@ async def get_easm_overview(
         select(func.count(Finding.id)).where(
             and_(
                 Finding.tenant_id == current_user.tenant_id,
-                Finding.status != "false_positive",
+                Finding.status == "open",
                 Finding.issue_type.in_([
                     "Missing DMARC Record", 
                     "DMARC Policy is 'None'", 
@@ -661,7 +661,7 @@ async def get_easm_brand_email(
     q = select(Finding).where(
         and_(
             Finding.tenant_id == current_user.tenant_id,
-            Finding.status != "false_positive",
+            Finding.status == "open",
             Finding.issue_type.in_([
                 "Missing DMARC Record", 
                 "DMARC Policy is 'None'", 

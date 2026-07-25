@@ -12,6 +12,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     # Application
@@ -66,8 +67,9 @@ class Settings(BaseSettings):
     # Frontend
     frontend_url: str = "http://localhost:3000"
 
-    # NVD API
+    # External APIs
     nvd_api_key: str = ""
+    open_ai_api: str = ""
 
     @property
     def cors_origins_list(self) -> List[str]:
