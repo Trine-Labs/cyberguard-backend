@@ -245,10 +245,12 @@ async def get_finding(
 async def update_finding_status(
     finding_id: str,
     body: StatusUpdateRequest,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ):
-    """Update finding status. Persisted to DB."""
+    """Update finding status. Persisted to DB & clears cached metrics."""
+    from fastapi_cache import FastAPICache
+
     await set_rls_tenant(session, str(current_user.tenant_id))
 
     valid_statuses = {"open", "resolved", "accepted_risk", "false_positive"}
@@ -259,7 +261,10 @@ async def update_finding_status(
         select(Finding).where(
             and_(
                 Finding.tenant_id == current_user.tenant_id,
-                Finding.id == finding_id,
+                or_(
+                    cast(Finding.id, String) == finding_id,
+                    Finding.human_id == finding_id,
+                )
             )
         )
     )
@@ -270,6 +275,21 @@ async def update_finding_status(
     finding.status = body.status
     if body.status == "resolved":
         finding.resolved_at = datetime.now(timezone.utc)
+    else:
+        finding.resolved_at = None
     finding.updated_at = datetime.now(timezone.utc)
 
-    return {"message": f"Status updated to '{body.status}'", "finding_id": str(finding.id)}
+    await session.commit()
+    await session.refresh(finding)
+
+    # Invalidate cached endpoints so UI immediately gets fresh DB metrics
+    try:
+        await FastAPICache.clear()
+    except Exception:
+        pass
+
+    return {
+        "message": f"Status updated to '{body.status}'",
+        "finding_id": str(finding.id),
+        "status": finding.status,
+    }
