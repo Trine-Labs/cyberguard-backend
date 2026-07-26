@@ -122,66 +122,77 @@ def _compute_dnssi_alignment(assets, open_findings) -> int:
 
 def _build_radar_signals(open_findings, max_signals=15):
     """
-    Build radar signal positions with proper spatial distribution.
+    Build radar signal positions with proper 2D spatial scatter distribution.
 
     Source-based angle zones:
-    - M365/Identity findings: 105°–165° (left sector of the semicircle)
-    - EASM/Perimeter findings: 15°–75° (right sector of the semicircle)
+    - M365/Identity findings: 98°–172° (left sector of semicircle)
+    - EASM/Perimeter findings: 8°–82° (right sector of semicircle)
 
-    Severity-based ring placement:
-    - Critical: ring 1 (innermost)
-    - High: ring 2
-    - Medium: ring 3
-    - Low: ring 4 (outermost)
-
-    Signals are evenly spaced within their source zone to prevent overlap.
-    Excludes any 'info' or non-actionable findings.
+    Severity-based ring placement with radial jitter offset:
+    - Critical: base ring 1.0 (innermost)
+    - High: base ring 2.0
+    - Medium: base ring 3.0
+    - Low: base ring 4.0 (outermost)
     """
-    ring_map = {"critical": 1, "high": 2, "medium": 3, "low": 4}
+    ring_base_map = {"critical": 1.0, "high": 2.0, "medium": 3.0, "low": 4.0}
 
     # Filter out info findings and separate by source
-    actionable_findings = [f for f in open_findings if f.severity in ring_map]
+    actionable_findings = [f for f in open_findings if f.severity in ring_base_map]
 
     m365_findings = [f for f in actionable_findings[:max_signals] if f.source == "m365"]
     easm_findings = [f for f in actionable_findings[:max_signals] if f.source != "m365"]
 
     radar_signals = []
 
-    # Distribute M365 findings across left sector (105°–165°)
+    # Distribute M365 findings across left sector (98°–172°)
     if m365_findings:
         count = len(m365_findings)
         if count == 1:
             angles_list = [135.0]
         else:
-            step = (165 - 105) / (count - 1)
-            angles_list = [105 + i * step for i in range(count)]
+            step = (172 - 98) / (count - 1)
+            angles_list = [98 + i * step for i in range(count)]
 
         for idx, f in enumerate(m365_findings):
             severity = f.severity
+            base_ring = ring_base_map[severity]
+            # Radial jitter offset to prevent 1D line stacking
+            radial_jitter = ((idx * 3) % 5 - 2) * 0.12
+            effective_ring = max(0.8, min(4.2, base_ring + radial_jitter))
+
             radar_signals.append({
+                "id": str(f.id),
                 "angle": round(angles_list[idx], 1),
-                "ring": ring_map[severity],
+                "ring": round(effective_ring, 2),
                 "severity": severity,
-                "label": f.issue_type or "Identity Signal",
+                "label": f.issue_type or "Identity Security Signal",
+                "entity": f.entity or "M365 Tenant Asset",
                 "source": "m365",
             })
 
-    # Distribute EASM findings across right sector (15°–75°)
+    # Distribute EASM findings across right sector (8°–82°)
     if easm_findings:
         count = len(easm_findings)
         if count == 1:
             angles_list = [45.0]
         else:
-            step = (75 - 15) / (count - 1)
-            angles_list = [15 + i * step for i in range(count)]
+            step = (82 - 8) / (count - 1)
+            angles_list = [8 + i * step for i in range(count)]
 
         for idx, f in enumerate(easm_findings):
             severity = f.severity
+            base_ring = ring_base_map[severity]
+            # Radial jitter offset to prevent 1D line stacking
+            radial_jitter = ((idx * 4) % 5 - 2) * 0.12
+            effective_ring = max(0.8, min(4.2, base_ring + radial_jitter))
+
             radar_signals.append({
+                "id": str(f.id),
                 "angle": round(angles_list[idx], 1),
-                "ring": ring_map[severity],
+                "ring": round(effective_ring, 2),
                 "severity": severity,
-                "label": f.issue_type or "Perimeter Signal",
+                "label": f.issue_type or "Perimeter Security Signal",
+                "entity": f.entity or "EASM Asset",
                 "source": f.source or "easm",
             })
 
