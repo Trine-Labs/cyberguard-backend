@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     # External APIs
     nvd_api_key: str = ""
     open_ai_api: str = ""
+    ai_model: str = "luna"
 
     @property
     def cors_origins_list(self) -> List[str]:

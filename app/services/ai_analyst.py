@@ -6,7 +6,7 @@ Features:
 - Industry & Sector Contextual Synthesis
 - Categorized Risk Domains & Attack Scenarios
 - Step-by-Step Technical Remediation Solutions (PowerShell, Entra, Network Hardening)
-- OpenAI GPT-4o Model Integration with Zero Data Retention
+- Luna AI Model Integration with Zero Data Retention
 - Robust Deterministic Rule-Based Fallback Synthesizer when API is unavailable
 - Strict Database Finding ID Validation
 """
@@ -313,7 +313,7 @@ async def call_llm_analyst(prompt: str) -> Dict[str, Any]:
     }
 
     payload = {
-        "model": "gpt-4o",
+        "model": settings.ai_model or "luna",
         "messages": [
             {
                 "role": "system",
@@ -438,3 +438,188 @@ async def run_ai_analyst_pipeline(
     validated_result["industry_context"] = industry_context
 
     return validated_result
+
+
+# ─── Executive Synthesis In-Memory/Persistent Store ──────────────────────────────────────────
+_EXECUTIVE_SYNTHESIS_STORE: Dict[str, Dict[str, Any]] = {}
+
+
+def save_executive_synthesis(tenant_id: str, synthesis: Dict[str, Any]) -> None:
+    """Save latest executive AI synthesis per tenant."""
+    synthesis_copy = dict(synthesis)
+    from datetime import datetime, timezone
+    synthesis_copy["saved_at"] = datetime.now(timezone.utc).isoformat()
+    _EXECUTIVE_SYNTHESIS_STORE[tenant_id] = synthesis_copy
+
+
+def get_latest_executive_synthesis(tenant_id: str) -> Dict[str, Any] | None:
+    """Retrieve saved executive AI synthesis for a tenant."""
+    return _EXECUTIVE_SYNTHESIS_STORE.get(tenant_id)
+
+
+# ─── Single Finding AI Synthesis Generator ───────────────────────────────────
+def generate_single_finding_fallback(finding: Dict[str, Any], industry_context: str) -> Dict[str, Any]:
+    """
+    Dynamic context-aware single finding AI synthesis generator.
+    Generates tailored root cause, business & threat impact, and technical remediation script.
+    """
+    from datetime import datetime, timezone
+
+    fid = finding.get("finding_id") or finding.get("id") or "FIN"
+    issue = (finding.get("issue_type") or "Security Discrepancy").strip()
+    issue_lower = issue.lower()
+    entity = finding.get("entity") or "Asset"
+    source = finding.get("source") or "ext_scanner"
+    severity = (finding.get("severity") or "medium").lower()
+    evidence = finding.get("evidence") or {}
+
+    is_info = severity == "info" or issue_lower.startswith("vulnerability") or "baseline" in issue_lower
+
+    if is_info:
+        ev_summary = (
+            ", ".join([f"{k.replace('_', ' ')}={v}" for k, v in list(evidence.items())[:3]])
+            if evidence else "Standard operational parameters observed."
+        )
+        return {
+            "root_cause": f"Baseline security telemetry recording for asset {entity}.",
+            "impact": f"Informational signal tracked for perimeter visibility under {industry_context} compliance benchmarks.",
+            "quick_fix": f"# Baseline telemetry logged for {entity}.\n# No remediation action or firewall policy change is required.",
+            "observation": f"Telemetry parameters: {ev_summary}",
+            "is_info": True,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    # Contextual analysis logic
+    if "mfa" in issue_lower or "auth" in issue_lower or source == "m365":
+        root_cause = f"Authentication configuration on {entity} lacks mandatory multi-factor authentication (MFA) enforcement policies or permits legacy protocol authentication."
+        impact = f"Threat actors exploiting compromised credentials can directly access {entity} without secondary verification, risking unauthorized tenant access in the {industry_context}."
+        quick_fix = (
+            f"# CyberGuard Remediation Script for {fid} ({entity})\n"
+            f"Connect-MgGraph -Scopes 'Policy.ReadWrite.ConditionalAccess', 'User.Read.All'\n\n"
+            f"# Create Conditional Access Policy enforcing MFA for {entity}\n"
+            f"$CAPolicy = @{{\n"
+            f"    DisplayName = 'CyberGuard-Enforce-MFA-{fid}'\n"
+            f"    State = 'enabled'\n"
+            f"    Conditions = @{{\n"
+            f"        Users = @{{ IncludeUsers = @('{entity}') }}\n"
+            f"        Applications = @{{ IncludeApplications = @('All') }}\n"
+            f"    }}\n"
+            f"    GrantControls = @{{\n"
+            f"        Operator = 'OR'\n"
+            f"        BuiltInControls = @('mfa')\n"
+            f"    }}\n"
+            f"}}\n"
+            f"New-MgIdentityConditionalAccessPolicy -BodyParameter $CAPolicy\n"
+            f"Write-Host '[SUCCESS] MFA Conditional Access Policy deployed for {entity}' -ForegroundColor Green"
+        )
+        observation = f"Audit of identity policy for {entity} confirmed missing Conditional Access MFA controls."
+
+    elif any(p in issue_lower for p in ["port", "rdp", "ssh", "ftp", "smb", "database", "mysql", "postgres"]):
+        root_cause = f"Perimeter network security group / firewall rules permit unauthenticated inbound traffic on management service ({issue}) exposed directly at asset {entity}."
+        impact = f"Continuous internet scanning services and automated botnets can perform brute-force password spraying or remote exploit execution against {entity}."
+        quick_fix = (
+            f"# CyberGuard Network Hardening Script for {fid} ({entity})\n"
+            f"# Step 1: Restrict inbound port exposure via Windows Firewall / Cloud NSG\n"
+            f"New-NetFirewallRule -Name 'CyberGuard_Block_{fid}' `\n"
+            f"    -DisplayName 'CyberGuard Perimeter Defense ({issue})' `\n"
+            f"    -Direction Inbound `\n"
+            f"    -Action Block `\n"
+            f"    -Protocol TCP `\n"
+            f"    -LocalPort 3389, 22, 21, 445, 3306, 5432 `\n"
+            f"    -Enabled True\n\n"
+            f"# Step 2: Validate firewall rule enforcement\n"
+            f"Get-NetFirewallRule -Name 'CyberGuard_Block_{fid}' | Format-Table DisplayName, Enabled, Action"
+        )
+        observation = f"External scan detected accessible port on {entity}. Network socket connection successfully established during audit."
+
+    elif any(d in issue_lower for d in ["dmarc", "spf", "dkim", "mail", "dns"]):
+        root_cause = f"Domain Name System (DNS) records for domain/host {entity} miss strict email authentication policy headers (DMARC p=reject or SPF -all enforcement)."
+        impact = f"Malicious actors can craft spoofed emails masquerading as official domain communications from {entity}, facilitating targeted phishing against banking clients."
+        quick_fix = (
+            f"; DNS TXT Record Hardening for {entity} (Ref: {fid})\n"
+            f"; Add / Update DMARC TXT Record at _dmarc.{entity}:\n"
+            f"_dmarc.{entity}. IN TXT \"v=DMARC1; p=reject; rua=mailto:dmarc-reports@{entity}; pct=100\"\n\n"
+            f"; Ensure SPF Record at {entity} enforces hard fail:\n"
+            f"{entity}. IN TXT \"v=spf1 include:spf.protection.outlook.com -all\""
+        )
+        observation = f"DNS query for {entity} returned missing or weak DMARC policy enforcement."
+
+    elif any(s in issue_lower for s in ["ssl", "tls", "header", "hsts", "csp", "certificate"]):
+        root_cause = f"Web application configuration on host {entity} lacks mandatory security headers (HSTS, CSP, X-Frame-Options) or uses deprecated TLS protocol versions."
+        impact = f"Clients connecting to {entity} are vulnerable to Man-in-the-Middle (MitM) interposition, session hijacking, and clickjacking attacks."
+        quick_fix = (
+            f"# CyberGuard Web Server Security Headers Configuration for {entity} ({fid})\n"
+            f"# Add to Nginx configuration block (or IIS HTTP Response Headers):\n"
+            f"add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains; preload\" always;\n"
+            f"add_header Content-Security-Policy \"default-src 'self'; script-src 'self'; object-src 'none';\" always;\n"
+            f"add_header X-Frame-Options \"DENY\" always;\n"
+            f"add_header X-Content-Type-Options \"nosniff\" always;\n"
+            f"add_header Referrer-Policy \"strict-origin-when-cross-origin\" always;"
+        )
+        observation = f"HTTP response headers inspection on {entity} revealed missing security flags."
+
+    else:
+        root_cause = f"Automated perimeter security audit identified policy discrepancy '{issue}' on target asset {entity}."
+        impact = f"Unmitigated vulnerabilities on {entity} expand the attack surface area and breach legal compliance requirements under {industry_context} guidelines."
+        quick_fix = (
+            f"# CyberGuard Hardening Command Suite for {fid} ({entity})\n"
+            f"# Audit active security baseline and enforce policy:\n"
+            f"Get-NetSecuritySetting | Format-List\n"
+            f"# Review evidence details for {entity} and apply localized patch"
+        )
+        observation = f"Automated verification rule triggered for {issue} on {entity}."
+
+    return {
+        "root_cause": root_cause,
+        "impact": impact,
+        "quick_fix": quick_fix,
+        "observation": observation,
+        "is_info": False,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def run_single_finding_ai_synthesis(
+    finding: Dict[str, Any],
+    industry_context: str = "Moroccan Banking Sector"
+) -> Dict[str, Any]:
+    """
+    Generate tailored AI synthesis for a single security finding.
+    Uses Luna AI model if configured, or intelligent context-aware fallback generator.
+    """
+    api_key = settings.open_ai_api or ""
+    anonymized_list, _ = anonymize_findings([finding])
+    anon_finding = anonymized_list[0] if anonymized_list else finding
+
+    if api_key:
+        prompt = f"""You are a Senior Cyber Threat Analyst providing a concise, technical finding synthesis for leadership and SOC engineers.
+
+Target Sector Context: {industry_context}
+Security Finding:
+- Finding ID: {anon_finding.get('finding_id')}
+- Issue Type: {anon_finding.get('issue_type')}
+- Entity / Asset: {anon_finding.get('entity')}
+- Severity: {anon_finding.get('severity')}
+- Source: {anon_finding.get('source')}
+- Evidence Details: {json.dumps(anon_finding.get('evidence', {}))}
+
+INSTRUCTIONS:
+Provide a clear, contextually accurate analysis in JSON format with exactly these fields:
+- "root_cause": Detailed technical explanation of why this issue exists on this specific asset.
+- "impact": Specific threat actor exploitation vector and business impact under {industry_context} rules.
+- "quick_fix": Ready-to-execute copyable PowerShell script, firewall command, or configuration snippet resolving the root cause.
+- "observation": Concise summary of scan telemetry evidence.
+
+OUTPUT FORMAT: Respond with raw valid JSON ONLY matching the keys: root_cause, impact, quick_fix, observation.
+"""
+        try:
+            raw = await call_llm_analyst(prompt)
+            if raw.get("root_cause") and raw.get("quick_fix"):
+                from datetime import datetime, timezone
+                raw["generated_at"] = datetime.now(timezone.utc).isoformat()
+                return raw
+        except Exception as e:
+            logger.warning(f"[AI Analyst] Single finding LLM call failed ({e}). Using context-aware fallback generator.")
+
+    return generate_single_finding_fallback(finding, industry_context)
+

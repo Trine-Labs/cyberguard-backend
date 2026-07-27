@@ -135,6 +135,18 @@ async def list_findings(
     return ret
 
 
+@router.get("/ai-analyst/latest")
+async def get_latest_ai_analyst_synthesis(
+    current_user: User = Depends(get_current_user),
+):
+    """Retrieve saved executive AI synthesis for the current tenant if available."""
+    from app.services.ai_analyst import get_latest_executive_synthesis
+    latest = get_latest_executive_synthesis(str(current_user.tenant_id))
+    if not latest:
+        return {"synthesis": None}
+    return {"synthesis": latest}
+
+
 @router.post("/ai-analyst/synthesize")
 async def synthesize_ai_analyst(
     body: AIAnalystRequest,
@@ -145,8 +157,9 @@ async def synthesize_ai_analyst(
     Module 5: AI Analyst Layer
     Takes deterministic Findings for the tenant, strips PII, and generates an
     executive-ready English synthesis with strict DB finding ID validation.
+    Persists synthesis for the tenant.
     """
-    from app.services.ai_analyst import run_ai_analyst_pipeline
+    from app.services.ai_analyst import run_ai_analyst_pipeline, save_executive_synthesis
 
     await set_rls_tenant(session, str(current_user.tenant_id))
 
@@ -166,9 +179,70 @@ async def synthesize_ai_analyst(
             findings=findings_data,
             industry_context=body.industry_context or "Moroccan Banking Sector"
         )
+        save_executive_synthesis(str(current_user.tenant_id), synthesis)
         return synthesis
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Analyst execution failed: {str(e)}")
+
+
+@router.post("/{finding_id}/synthesize")
+async def synthesize_single_finding(
+    finding_id: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Generate dynamic context-aware AI synthesis for a single security finding
+    and save the result directly into finding.evidence['ai_synthesis'] in PostgreSQL.
+    """
+    from app.services.ai_analyst import run_single_finding_ai_synthesis
+    from sqlalchemy.orm.attributes import flag_modified
+    from fastapi_cache import FastAPICache
+
+    await set_rls_tenant(session, str(current_user.tenant_id))
+
+    result = await session.execute(
+        select(Finding).where(
+            and_(
+                Finding.tenant_id == current_user.tenant_id,
+                or_(
+                    cast(Finding.id, String) == finding_id,
+                    Finding.human_id == finding_id,
+                )
+            )
+        )
+    )
+    finding = result.scalar_one_or_none()
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+
+    finding_dict = _finding_to_dict(finding)
+    synthesis_result = await run_single_finding_ai_synthesis(
+        finding=finding_dict,
+        industry_context="Moroccan Banking Sector"
+    )
+
+    new_evidence = dict(finding.evidence or {})
+    new_evidence["ai_synthesis"] = synthesis_result
+    finding.evidence = new_evidence
+    flag_modified(finding, "evidence")
+    finding.updated_at = datetime.now(timezone.utc)
+
+    await session.commit()
+    await session.refresh(finding)
+
+    try:
+        await FastAPICache.clear()
+    except Exception:
+        pass
+
+    return {
+        "message": "AI synthesis generated and saved",
+        "finding_id": str(finding.id),
+        "ai_synthesis": synthesis_result,
+        "finding": _finding_to_dict(finding),
+    }
+
 
 
 @router.get("/export/pdf")

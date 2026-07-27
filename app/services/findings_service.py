@@ -40,7 +40,10 @@ async def upsert_m365_findings(
             # Update last_seen
             existing = existing_map[key]
             existing.last_seen_at = datetime.utcnow()
-            existing.evidence = nf["evidence"]
+            updated_ev = dict(nf["evidence"] or {})
+            if existing.evidence and "ai_synthesis" in existing.evidence and "ai_synthesis" not in updated_ev:
+                updated_ev["ai_synthesis"] = existing.evidence["ai_synthesis"]
+            existing.evidence = updated_ev
         else:
             # Insert new
             from sqlalchemy import text as _text
