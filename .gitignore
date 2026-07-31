@@ -1,4 +1,4 @@
-﻿# Environment variables
+# Environment variables
 .env
 .env.*
 !.env.example
@@ -27,6 +27,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Large binaries (>100MB exceed GitHub limit)
-bin/*.exe
-bin/*.old
+# Binaries & templates
+bin/
+
