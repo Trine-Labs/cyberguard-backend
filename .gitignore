@@ -31,3 +31,6 @@ Thumbs.db
 bin/nuclei.exe
 bin/*.exe
 bin/*.old
+
+# Nuclei scanner binaries and templates (too large for GitHub)
+bin/
