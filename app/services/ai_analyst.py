@@ -297,13 +297,32 @@ def generate_fallback_synthesis(
     }
 
 
+class _ModelNotFound(Exception):
+    """Raised internally when a model returns 404 — triggers fallback to next model."""
+
+
 async def call_llm_analyst(prompt: str) -> Dict[str, Any]:
     """
-    Calls the OpenAI API endpoint with Zero Data Retention headers.
+    Calls the OpenAI API with luna (gpt-5.6-luna) as primary model.
+    luna does NOT support response_format or max_completion_tokens.
+    JSON is enforced via system prompt only (same pattern as MYTH project).
+    Falls back to gpt-4o-mini on 404 or persistent failure.
+    Timeout: 120s.
     """
     api_key = settings.open_ai_api or ""
     if not api_key:
         raise ValueError("OPEN_AI_API key is not configured in backend environment (.env).")
+
+    # Model alias resolution
+    configured_model = (settings.ai_model or "").strip()
+    alias_map = {
+        "luna":    "gpt-5.6-luna",
+        "sol":     "gpt-5.6-sol",
+        "terra":   "gpt-5.6-terra",
+        "gpt-5.6": "gpt-5.6-sol",
+        "":        "gpt-5.6-luna",
+    }
+    model_name = alias_map.get(configured_model.lower(), configured_model)
 
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
@@ -312,39 +331,86 @@ async def call_llm_analyst(prompt: str) -> Dict[str, Any]:
         "X-OpenAI-Zero-Data-Retention": "true",
     }
 
-    payload = {
-        "model": settings.ai_model or "luna",
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a Senior Principal Cybersecurity Architect delivering categorized, technical solution reports in structured JSON format."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.2,
-        "max_tokens": 3000,
-    }
+    # luna does NOT support response_format:json_object — causes empty content.
+    # Enforce JSON output via system prompt only (verified working pattern from MYTH project).
+    system_msg = (
+        "You are a Senior Principal Cybersecurity Architect. "
+        "Output ONLY a single valid JSON object. "
+        "No markdown, no code fences, no explanation — raw JSON only."
+    )
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(url, headers=headers, json=payload)
-        
-        if response.status_code != 200:
-            logger.error(f"[AI Analyst] API error {response.status_code}: {response.text}")
-            raise RuntimeError(f"OpenAI API returned status {response.status_code}: {response.text}")
-
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
-        
+    def _extract_json(text: str) -> Dict[str, Any]:
+        text = text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"\s*```$", "", text).strip()
         try:
-            parsed = json.loads(content)
-            return parsed
-        except json.JSONDecodeError as e:
-            logger.error(f"[AI Analyst] Invalid JSON output from LLM: {content}")
-            raise ValueError(f"LLM did not return valid JSON: {e}")
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        match = re.search(r"(\{.*\})", text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+        raise ValueError(f"LLM did not return valid JSON: {text[:300]!r}")
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+
+        async def _call(model: str) -> Dict[str, Any]:
+            payload: dict = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user",   "content": prompt},
+                ],
+                "temperature": 0.4,
+            }
+            resp = await client.post(url, headers=headers, json=payload)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                raw = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+                if not raw.strip():
+                    raise ValueError(f"Model '{model}' returned empty content.")
+                return _extract_json(raw)
+
+            if resp.status_code == 400:
+                err = resp.text
+                # temperature rejected — retry once without it
+                if "temperature" in err or "unsupported_value" in err:
+                    logger.info(f"[AI Analyst] '{model}' rejects temperature, retrying without.")
+                    payload.pop("temperature", None)
+                    resp2 = await client.post(url, headers=headers, json=payload)
+                    if resp2.status_code == 200:
+                        data2 = resp2.json()
+                        raw2 = (data2.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+                        if raw2.strip():
+                            return _extract_json(raw2)
+                    err = resp2.text
+                raise RuntimeError(f"OpenAI API 400: {err}")
+
+            if resp.status_code == 404:
+                raise _ModelNotFound(f"Model '{model}' not found (404).")
+
+            raise RuntimeError(f"OpenAI API {resp.status_code}: {resp.text}")
+
+        for attempt_model in [model_name, "gpt-4o-mini"]:
+            try:
+                result = await _call(attempt_model)
+                logger.info(f"[AI Analyst] Success with '{attempt_model}'.")
+                return result
+            except _ModelNotFound as e:
+                logger.warning(f"[AI Analyst] {e} — falling back to gpt-4o-mini.")
+                continue
+            except ValueError as e:
+                if attempt_model != "gpt-4o-mini":
+                    logger.warning(f"[AI Analyst] '{attempt_model}' failed ({e}) — retrying with gpt-4o-mini.")
+                    continue
+                raise
+
+        raise RuntimeError("All AI model attempts exhausted.")
 
 
 def validate_ai_synthesis(raw_response: Dict[str, Any], valid_db_finding_ids: Set[str]) -> Dict[str, Any]:

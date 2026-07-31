@@ -177,7 +177,7 @@ async def synthesize_ai_analyst(
     try:
         synthesis = await run_ai_analyst_pipeline(
             findings=findings_data,
-            industry_context=body.industry_context or "Moroccan Banking Sector"
+            industry_context=body.industry_context or "Enterprise Security Baseline"
         )
         save_executive_synthesis(str(current_user.tenant_id), synthesis)
         return synthesis
@@ -219,7 +219,7 @@ async def synthesize_single_finding(
     finding_dict = _finding_to_dict(finding)
     synthesis_result = await run_single_finding_ai_synthesis(
         finding=finding_dict,
-        industry_context="Moroccan Banking Sector"
+        industry_context="Enterprise Security Baseline"
     )
 
     new_evidence = dict(finding.evidence or {})
@@ -242,6 +242,48 @@ async def synthesize_single_finding(
         "ai_synthesis": synthesis_result,
         "finding": _finding_to_dict(finding),
     }
+
+
+@router.post("/{finding_id}/synthesize/preview")
+async def synthesize_single_finding_preview(
+    finding_id: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Ephemeral AI synthesis — generates and returns the result WITHOUT saving to DB.
+    Used for instant on-open synthesis in the UI (transient, not persisted).
+    """
+    from app.services.ai_analyst import run_single_finding_ai_synthesis
+
+    await set_rls_tenant(session, str(current_user.tenant_id))
+
+    result = await session.execute(
+        select(Finding).where(
+            and_(
+                Finding.tenant_id == current_user.tenant_id,
+                or_(
+                    cast(Finding.id, String) == finding_id,
+                    Finding.human_id == finding_id,
+                )
+            )
+        )
+    )
+    finding = result.scalar_one_or_none()
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+
+    finding_dict = _finding_to_dict(finding)
+    synthesis_result = await run_single_finding_ai_synthesis(
+        finding=finding_dict,
+        industry_context="Enterprise Security Baseline"
+    )
+
+    return {
+        "finding_id": str(finding.id),
+        "ai_synthesis": synthesis_result,
+    }
+
 
 
 
