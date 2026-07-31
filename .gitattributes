@@ -1,0 +1,26 @@
+﻿# CyberGuard Backend — Git line ending rules
+
+# Default: normalize to LF on commit
+* text=auto eol=lf
+
+# Nuclei templates and YAML files: always LF
+*.yaml text eol=lf
+*.yml  text eol=lf
+
+# Python source: LF
+*.py   text eol=lf
+
+# Shell scripts: LF
+*.sh   text eol=lf
+
+# Windows batch/PowerShell: CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binaries: no conversion
+*.exe  binary
+*.bin  binary
+*.png  binary
+*.jpg  binary
+*.ico  binary
