@@ -1,4 +1,4 @@
-# Environment variables
+ï»¿# Environment variables
 .env
 .env.*
 !.env.example
@@ -27,10 +27,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Large binaries — exceed GitHub 100MB limit, managed separately
-bin/nuclei.exe
+# Large binaries (>100MB exceed GitHub limit)
 bin/*.exe
 bin/*.old
-
-# Nuclei scanner binaries and templates (too large for GitHub)
-bin/
