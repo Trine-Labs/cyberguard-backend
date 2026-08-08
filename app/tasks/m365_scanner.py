@@ -70,10 +70,10 @@ async def _process_tenant(session: AsyncSession, cred: M365Credential):
         # If Microsoft returned a rotated refresh token, update it in DB immediately
         if new_refresh_token and new_refresh_token != refresh_token_plaintext:
             from app.services.crypto_service import encrypt_token
-            new_blob = encrypt_token(new_refresh_token)
+            new_blob = encrypt_token(new_refresh_token, str(cred.tenant_id))
             cred.encrypted_refresh_token = new_blob.ciphertext
             cred.kms_key_id = new_blob.kms_key_id
-            cred.updated_at = datetime.now(timezone.utc)
+            cred.last_used_at = datetime.now(timezone.utc)
             await session.commit()
 
         client = M365GraphClient(cred.tenant_id, access_token, session)
@@ -153,7 +153,10 @@ async def _process_tenant(session: AsyncSession, cred: M365Credential):
                 "findings": [f for f in findings if f["severity"] in ("high", "critical")],
             }
 
+            from sqlalchemy.orm.attributes import flag_modified
             cred.hub_state = hub_state
+            cred.last_used_at = datetime.now(timezone.utc)
+            flag_modified(cred, "hub_state")
             await session.commit()
 
             logger.info(
