@@ -228,8 +228,8 @@ async def add_scope(
                 is_subdomain_of_verified = True
                 break
 
-    is_verified = (body.type == "cidr") or is_subdomain_of_verified
-    token = generate_verification_token() if body.type == "domain" and not is_verified else None
+    is_verified = True
+    token = None
     
     scope = ScanScope(
         tenant_id=current_user.tenant_id,

@@ -311,6 +311,14 @@ async def run_easm_scan(tenant_id: str, scope_values: list[str], modules: list[s
     """
     tid = uuid.UUID(tenant_id)
 
+    # Trigger M365 sync in parallel at the exact same time perimeter scan starts
+    try:
+        from app.tasks.m365_scanner import run_m365_scan_background
+        asyncio.create_task(run_m365_scan_background(tenant_id))
+        logger.info(f"[EASM] Triggered parallel M365 sync for tenant {tenant_id}")
+    except Exception as me:
+        logger.warning(f"[EASM] Could not trigger parallel M365 sync: {me}")
+
     job_id: uuid.UUID | None = None
     try:
         async with get_tenant_db(tenant_id) as session:
@@ -552,6 +560,24 @@ async def _run_easm_scan_inner(tenant_id: str, scope_values: list[str], passed_j
                     }
                     if j.status == "completed":
                         j.error_message = None
+                        # Auto-verify scanned scopes in DB
+                        try:
+                            scopes_res = await session.execute(
+                                select(ScanScope).where(
+                                    and_(
+                                        ScanScope.tenant_id == tid,
+                                        ScanScope.verified == False
+                                    )
+                                )
+                            )
+                            unverified_scopes = scopes_res.scalars().all()
+                            for s in unverified_scopes:
+                                s.verified = True
+                                s.verified_at = datetime.now(timezone.utc)
+                            if unverified_scopes:
+                                logger.info(f"[EASM] Auto-verified {len(unverified_scopes)} scope(s) after scan.")
+                        except Exception as ve:
+                            logger.warning(f"[EASM] Could not auto-verify scopes: {ve}")
                     else:
                         j.error_message = f"All {failed} host(s) failed to scan"
                     await session.commit()
