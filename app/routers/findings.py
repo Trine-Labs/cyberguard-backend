@@ -52,7 +52,6 @@ class AIAnalystRequest(BaseModel):
 
 
 @router.get("")
-@cache(expire=60, key_builder=tenant_key_builder)
 async def list_findings(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
@@ -149,26 +148,37 @@ async def get_latest_ai_analyst_synthesis(
 
 @router.post("/ai-analyst/synthesize")
 async def synthesize_ai_analyst(
-    body: AIAnalystRequest,
+    body: Optional[AIAnalystRequest] = None,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ):
     """
     Module 5: AI Analyst Layer
-    Takes deterministic Findings for the tenant, strips PII, and generates an
-    executive-ready English synthesis with strict DB finding ID validation.
+    Takes deterministic Findings for the tenant, strips PII, embeds tenant profile background info (data training context),
+    and generates an executive-ready English synthesis with strict DB finding ID validation.
     Persists synthesis for the tenant.
     """
     from app.services.ai_analyst import run_ai_analyst_pipeline, save_executive_synthesis
+    from app.models.tenant import Tenant
 
     await set_rls_tenant(session, str(current_user.tenant_id))
+
+    # Fetch Tenant profile info
+    t_res = await session.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
+    tenant = t_res.scalar_one_or_none()
+
+    company_info = tenant.company_info if (tenant and tenant.company_info) else ""
+    org_name = tenant.org_name if tenant else "Enterprise Business"
+    industry_ctx = f"{org_name} Profile Context" if company_info else f"{org_name} Security Baseline"
+
+    top_n = body.top_n if (body and body.top_n) else 20
 
     # Fetch top findings for the tenant ordered by severity
     q = (
         select(Finding)
         .where(and_(Finding.tenant_id == current_user.tenant_id, Finding.status == "open"))
         .order_by(Finding.severity, Finding.created_at.desc())
-        .limit(body.top_n or 20)
+        .limit(top_n)
     )
     result = await session.execute(q)
     findings_orm = result.scalars().all()
@@ -177,7 +187,9 @@ async def synthesize_ai_analyst(
     try:
         synthesis = await run_ai_analyst_pipeline(
             findings=findings_data,
-            industry_context=body.industry_context or "Enterprise Security Baseline"
+            industry_context=industry_ctx,
+            company_info=company_info,
+            org_name=org_name,
         )
         save_executive_synthesis(str(current_user.tenant_id), synthesis)
         return synthesis
@@ -188,12 +200,14 @@ async def synthesize_ai_analyst(
 @router.post("/{finding_id}/synthesize")
 async def synthesize_single_finding(
     finding_id: str,
+    force: bool = Query(False),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ):
     """
     Generate dynamic context-aware AI synthesis for a single security finding
     and save the result directly into finding.evidence['ai_synthesis'] in PostgreSQL.
+    If an AI synthesis already exists and force=False, returns the cached database record instantly.
     """
     from app.services.ai_analyst import run_single_finding_ai_synthesis
     from sqlalchemy.orm.attributes import flag_modified
@@ -216,10 +230,26 @@ async def synthesize_single_finding(
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
 
+    # ── Return cached DB synthesis if already generated and force=False ──────────
+    existing_synthesis = finding.evidence.get("ai_synthesis") if (finding.evidence and isinstance(finding.evidence, dict)) else None
+    if not force and existing_synthesis:
+        return {
+            "message": "AI synthesis retrieved from database cache",
+            "finding_id": str(finding.id),
+            "ai_synthesis": existing_synthesis,
+            "finding": _finding_to_dict(finding),
+        }
+
+    from app.models.tenant import Tenant
+    t_res = await session.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
+    current_tenant = t_res.scalar_one_or_none()
+    company_info = current_tenant.company_info if current_tenant else ""
+
     finding_dict = _finding_to_dict(finding)
     synthesis_result = await run_single_finding_ai_synthesis(
         finding=finding_dict,
-        industry_context="Enterprise Security Baseline"
+        industry_context="Enterprise Security Baseline",
+        company_info=company_info or ""
     )
 
     new_evidence = dict(finding.evidence or {})
@@ -255,6 +285,7 @@ async def synthesize_single_finding_preview(
     Used for instant on-open synthesis in the UI (transient, not persisted).
     """
     from app.services.ai_analyst import run_single_finding_ai_synthesis
+    from app.models.tenant import Tenant
 
     await set_rls_tenant(session, str(current_user.tenant_id))
 
@@ -273,10 +304,15 @@ async def synthesize_single_finding_preview(
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
 
+    t_res = await session.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
+    current_tenant = t_res.scalar_one_or_none()
+    company_info = current_tenant.company_info if current_tenant else ""
+
     finding_dict = _finding_to_dict(finding)
     synthesis_result = await run_single_finding_ai_synthesis(
         finding=finding_dict,
-        industry_context="Enterprise Security Baseline"
+        industry_context="Enterprise Security Baseline",
+        company_info=company_info or ""
     )
 
     return {

@@ -1,7 +1,7 @@
 """Tenant ORM Model"""
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 from sqlalchemy import String, DateTime, Integer, func
 from sqlalchemy.dialects.postgresql import UUID, ENUM
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -23,6 +23,9 @@ class Tenant(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     org_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    contact_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    company_info: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # Data Training / AI Background Context
+    scan_frequency: Mapped[str] = mapped_column(String(50), nullable=False, default="daily")  # weekly, daily, twice_daily, six_hours
     status: Mapped[str] = mapped_column(
         ENUM("onboarding", "active", "suspended", name="tenant_status", create_type=False),
         nullable=False, default="onboarding"

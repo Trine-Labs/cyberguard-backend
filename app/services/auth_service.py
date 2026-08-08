@@ -137,8 +137,12 @@ def decode_token(token: str) -> dict:
 
 def validate_corporate_email(email: str) -> bool:
     """
-    Rejects public email providers (Gmail, Yahoo, etc.).
-    Returns True if the email is from a corporate domain.
+    Validates standard email format.
+    Allows all corporate and public email domains (e.g. gmail.com, yahoo.com, outlook.com).
     """
-    domain = email.split("@")[-1].lower().strip()
-    return domain not in settings.blocked_email_domains_list
+    if not email or "@" not in email:
+        return False
+    parts = email.split("@")
+    if len(parts) != 2 or not parts[0].strip() or not parts[1].strip() or "." not in parts[1]:
+        return False
+    return True

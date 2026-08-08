@@ -38,7 +38,7 @@
     {"path": "/actuator/configprops", "severity": "critical", "type": "Administrative Endpoint", "keywords": ["\"contexts\"", "\"beans\""]},
     {"path": "/actuator/mappings", "severity": "medium", "type": "Administrative Endpoint", "keywords": ["\"contexts\"", "\"mappings\""]},
     {"path": "/wp-admin/", "severity": "high", "type": "Administrative Endpoint", "keywords": ["wp-login.php", "user_login"]},
-    {"path": "/admin/", "severity": "high", "type": "Administrative Endpoint", "keywords": ["type=\"password\""]},
+    {"path": "/admin/", "severity": "high", "type": "Administrative Endpoint", "keywords": ["<title>Admin", "<title>Administration", "Admin Login", "Dashboard - Admin"]},
     {"path": "/dashboard/", "severity": "medium", "type": "Administrative Endpoint", "keywords": ["<title>Dashboard</title>"]},
     {"path": "/console/", "severity": "high", "type": "Administrative Endpoint", "keywords": ["<title>Console</title>"]},
     {"path": "/swagger/index.html", "severity": "medium", "type": "API Documentation", "keywords": ["Swagger UI", "swagger-ui"]},
@@ -60,8 +60,8 @@
 
     {"path": "/server-status", "severity": "high", "type": "Server Info Leak", "keywords": ["Apache Server Status", "Total accesses"]},
     {"path": "/server-info", "severity": "high", "type": "Server Info Leak", "keywords": ["Apache Server Information"]},
-    {"path": "/info.php", "severity": "high", "type": "PHP Info Leak", "keywords": ["phpinfo()", "PHP Version", "Configuration"]},
-    {"path": "/phpinfo.php", "severity": "high", "type": "PHP Info Leak", "keywords": ["phpinfo()", "PHP Version", "Configuration"]},
+    {"path": "/info.php", "severity": "high", "type": "PHP Info Leak", "keywords": ["phpinfo()", "PHP Version", "Loaded Configuration File"]},
+    {"path": "/phpinfo.php", "severity": "high", "type": "PHP Info Leak", "keywords": ["phpinfo()", "PHP Version", "Loaded Configuration File"]},
     {"path": "/.DS_Store", "severity": "medium", "type": "File Metadata Leak", "keywords": ["\u0000\u0000\u0000\u0001Bud1"]},
     {"path": "/crossdomain.xml", "severity": "medium", "type": "Cross-Domain Policy", "keywords": ["allow-access-from domain=\"*\""]},
     {"path": "/elmah.axd", "severity": "high", "type": "Error Log Exposure", "keywords": ["Error Log for", "ELMAH"]},
@@ -84,7 +84,7 @@
     {"regex": "wp-login\\.php", "app": "WordPress Admin", "severity": "high", "type": "Administrative Endpoint"},
     {"regex": "<title>[^<]*Adminer[^<]*</title>", "app": "Adminer", "severity": "high", "type": "Admin Database"},
     {"regex": "<title>Kibana</title>", "app": "Kibana", "severity": "high", "type": "Data Visualization Exposure"},
-    {"regex": "Elastic", "app": "Elasticsearch", "severity": "high", "type": "Data Store Exposure"},
+    {"regex": "\"cluster_name\"|\"number_of_nodes\"|you_know_for_search", "app": "Elasticsearch", "severity": "high", "type": "Data Store Exposure"},
     {"regex": "<title>Grafana</title>", "app": "Grafana", "severity": "medium", "type": "Monitoring Exposure"},
     {"regex": "<title>MinIO Console</title>|minio", "app": "MinIO", "severity": "high", "type": "Storage Exposure"}
   ]

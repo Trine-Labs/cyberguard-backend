@@ -3,7 +3,7 @@ import asyncio
 import logging
 from datetime import datetime
 from app.worker import celery_app
-from app.database import async_session_maker
+from app.database import AsyncSessionLocal
 from app.models.m365_credential import M365Credential
 from sqlalchemy import select
 
@@ -15,7 +15,7 @@ async def _rotate_all_tokens_async():
     # Here we would fetch all active tokens and use m365_service to refresh them.
     # We will implement the actual refresh logic in Phase 4 when KMS is connected.
     # For now, we simulate finding credentials and marking task completion.
-    async with async_session_maker() as session:
+    async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(M365Credential).where(M365Credential.token_status == "active")
         )

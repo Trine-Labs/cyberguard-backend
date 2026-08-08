@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     debug: bool = True
     cors_origins: str = "http://localhost:3000"
 
+    # Platform Admin Portal Credentials (env configurable)
+    admin_portal_username: str = "admin"
+    admin_portal_password: str = "CyberGuard@Admin2026!"
+
     # Database
     database_url: str
 
@@ -49,13 +53,23 @@ class Settings(BaseSettings):
         "https://graph.microsoft.com/UserAuthenticationMethod.Read.All "
         "https://graph.microsoft.com/SharePointTenantSettings.Read.All "
         "https://graph.microsoft.com/IdentityRiskyUser.Read.All "
+        "https://graph.microsoft.com/DeviceManagementManagedDevices.Read.All "
         "offline_access"
     )
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
-    # TOTP
+    # SMTP / Email Settings
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = "CyberGuard Enterprise Security"
+    email_enabled: bool = True
+
+    # TOTP / OTP
     totp_issuer: str = "CyberGuard"
 
     # Blocked email providers
@@ -71,6 +85,9 @@ class Settings(BaseSettings):
     nvd_api_key: str = ""
     open_ai_api: str = ""
     ai_model: str = "luna"
+
+    # Have I Been Pwned (HIBP) — Domain breach search (requires HIBP Enterprise key)
+    hibp_api_key: str = ""
 
     @property
     def cors_origins_list(self) -> List[str]:

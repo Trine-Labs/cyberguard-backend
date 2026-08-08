@@ -1,10 +1,7 @@
 """
-CyberGuard -- EASM Scanner Service (Facade Module)
-
-Maintains 100% backward compatibility for imports from app.services.easm_scanner
-by re-exporting all components from the modular app.services.easm package.
+EASM Scanner Service Package
 """
-from app.services.easm import (
+from app.services.easm.config import (
     _GLOBAL_SCAN_SEM,
     _HTTP_CLIENT,
     _TENANT_LOCKS,
@@ -15,40 +12,48 @@ from app.services.easm import (
     RISKY_PORTS,
     SENSITIVE_PATH_SIGNATURES,
     SUSPICIOUS_PATTERNS,
-    _active_subdomain_bruteforce,
+    _get_tenant_lock,
+    _is_cidr,
+    _is_ip,
+)
+from app.services.easm.findings import _generate_findings
+from app.services.easm.hibp import (
+    _check_hibp_domain_breach,
+    _check_hibp_public_breaches_free,
+    _run_hibp_scan,
+)
+from app.services.easm.nuclei import _run_nuclei_phase
+from app.services.easm.probes import (
     _analyze_javascript,
     _calculate_cve_data,
     _check_email_security,
-    _check_hibp_domain_breach,
-    _check_hibp_public_breaches_free,
-    _check_wildcard_dns,
     _crawl_links,
-    _crtsh_subdomains,
     _detect_tech_stack,
-    _enumerate_subdomains,
-    _generate_findings,
     _get_catch_all_details,
-    _get_tenant_lock,
     _get_wappalyzer,
     _grade_security_headers,
     _grade_security_headers_detailed,
-    _hackertarget_subdomains,
-    _is_cidr,
-    _is_ip,
-    _is_job_cancelled,
     _probe_http,
     _probe_sensitive_paths,
     _probe_tls,
     _resolve_geoip,
     _resolve_ip,
-    _run_easm_scan_inner,
-    _run_hibp_scan,
-    _run_nuclei_phase,
-    _scan_domain_inner,
     _scan_port,
     _test_catch_all,
+)
+from app.services.easm.scanner import (
+    _is_job_cancelled,
+    _run_easm_scan_inner,
+    _scan_domain_inner,
     run_easm_scan,
     scan_domain,
+)
+from app.services.easm.subdomain import (
+    _active_subdomain_bruteforce,
+    _check_wildcard_dns,
+    _crtsh_subdomains,
+    _enumerate_subdomains,
+    _hackertarget_subdomains,
 )
 
 __all__ = [

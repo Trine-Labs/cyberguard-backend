@@ -20,6 +20,7 @@ from app.services.dns_service import (
     generate_verification_token, check_dns_txt_verification,
 )
 from app.services.easm_scanner import run_easm_scan
+from app.tasks.m365_scanner import run_m365_scan_background
 
 router = APIRouter(prefix="/api/v1/settings", tags=["Settings"])
 
@@ -346,6 +347,7 @@ async def rescan_scope(
         raise HTTPException(status_code=404, detail="Scope not found.")
 
     background_tasks.add_task(run_easm_scan, str(current_user.tenant_id), [scope.value])
+    background_tasks.add_task(run_m365_scan_background, str(current_user.tenant_id))
     return {"message": f"Rescan started for '{scope.value}'."}
 
 
@@ -369,6 +371,7 @@ async def rescan_all(
 
     values = [s.value for s in scopes]
     background_tasks.add_task(run_easm_scan, str(current_user.tenant_id), values)
+    background_tasks.add_task(run_m365_scan_background, str(current_user.tenant_id))
     return {"message": f"Full rescan started for {len(values)} target(s).", "targets": values}
 
 
@@ -390,6 +393,7 @@ async def rescan_custom(
     # The scanner naturally bounds itself to the tenant's authorized root domains.
     
     background_tasks.add_task(run_easm_scan, str(current_user.tenant_id), body.targets, body.modules)
+    background_tasks.add_task(run_m365_scan_background, str(current_user.tenant_id))
     return {"message": f"Custom scan started for {len(body.targets)} target(s).", "targets": body.targets}
 
 

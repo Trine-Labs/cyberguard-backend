@@ -79,17 +79,18 @@ def anonymize_findings(findings: List[Dict[str, Any]]) -> Tuple[List[Dict[str, A
     return anonymized, mapping
 
 
-def construct_prompt(anonymized_findings: List[Dict[str, Any]], industry_context: str) -> str:
+def construct_prompt(anonymized_findings: List[Dict[str, Any]], industry_context: str, company_info: str = "") -> str:
     """
     Constructs an enriched prompt for the LLM instructing it to generate a categorized,
-    solution-driven English executive synthesis.
+    solution-driven English executive synthesis with company background training context.
     """
     findings_json = json.dumps(anonymized_findings, indent=2)
+    company_bg_block = f"\nTARGET COMPANY BACKGROUND & TRAINING CONTEXT:\n{company_info}\n" if company_info else ""
 
     prompt = f"""You are a Principal Enterprise Cyber Security & Threat Analyst conducting a comprehensive Executive Synthesis for leadership and technical operations teams.
 
 Target Industry & Sector Context: {industry_context}
-
+{company_bg_block}
 Anonymized Security Findings Data:
 ```json
 {findings_json}
@@ -147,7 +148,9 @@ Respond ONLY with a valid JSON object matching this exact structure:
 
 def generate_fallback_synthesis(
     anonymized_findings: List[Dict[str, Any]],
-    industry_context: str
+    industry_context: str,
+    company_info: str = "",
+    org_name: str = ""
 ) -> Dict[str, Any]:
     """
     Deterministic Rule-Based Fallback Synthesis Generator:
@@ -183,12 +186,15 @@ def generate_fallback_synthesis(
             "finding_count": len(anonymized_findings),
         })
 
+    bg_narrative = f" (Company Profile Context: {company_info})" if company_info else ""
+    target_name = org_name or industry_context
+
     exec_summary = (
-        f"CyberGuard Executive Security Assessment for {industry_context}:\n\n"
+        f"CyberGuard Executive Security Assessment for {target_name}{bg_narrative}:\n\n"
         f"A total of {len(anonymized_findings)} active security findings were analyzed ({critical_count} Critical, {high_count} High). "
         f"The primary threat exposure centers around identity posture vulnerabilities and public attack surface exposure. "
         f"Unenforced multi-factor authentication and open perimeter services represent high-probability initial access vectors.\n\n"
-        f"Immediate remediation is required to align with sector regulations (such as DNSSI Directive, ISO 27001, and Central Bank directives). "
+        f"Immediate remediation is required to align with organization requirements and security frameworks (such as DNSSI Directive, ISO 27001, and GDPR). "
         f"Implementing the step-by-step technical controls detailed below will reduce organizational breach risk by up to 85%."
     )
 
@@ -199,9 +205,10 @@ def generate_fallback_synthesis(
     )
 
     compliance_text = (
-        f"Operating in the {industry_context} mandates strict adherence to data protection and cybersecurity frameworks. "
+        f"Operating as {target_name} mandates strict adherence to data protection and cybersecurity frameworks. "
         f"Unresolved critical findings create non-compliance risks under local security directives (DNSSI), ISO 27001 Annex A.9 (Access Control), "
         f"and GDPR Art 32 (Security of Processing)."
+        f"{' Custom Embedded Profile Context: ' + company_info if company_info else ''}"
     )
 
     strategic_risks = []
@@ -455,12 +462,14 @@ def validate_ai_synthesis(raw_response: Dict[str, Any], valid_db_finding_ids: Se
 
 async def run_ai_analyst_pipeline(
     findings: List[Dict[str, Any]],
-    industry_context: str = "Moroccan Banking Sector"
+    industry_context: str = "Enterprise Security Baseline",
+    company_info: str = "",
+    org_name: str = ""
 ) -> Dict[str, Any]:
     """
     Full Execution Flow:
     1. Extract & Anonymize PII
-    2. Build Prompt with Industry Context
+    2. Build Prompt with Industry Context & Company Background Context
     3. Call OpenAI Model API (with automatic fallback to deterministic synthesis if API key is unconfigured/fails)
     4. Strict Validation against actual DB Finding IDs
     """
@@ -469,13 +478,15 @@ async def run_ai_analyst_pipeline(
             "executive_summary": "No active security findings detected for analysis.",
             "posture_overview": "Zero open critical or high findings.",
             "key_threat_vectors": "No active perimeter attack vectors.",
-            "compliance_impact": "Compliant based on current scan baseline.",
+            "compliance_impact": f"Compliant based on current scan baseline.{' Organization Context: ' + company_info if company_info else ''}",
             "category_summaries": [],
             "strategic_risks": [],
             "prioritized_action_plan": [],
             "analyzed_finding_ids": [],
             "anonymization_stats": {"findings_processed": 0, "pii_mappings": 0},
             "industry_context": industry_context,
+            "company_info": company_info,
+            "org_name": org_name,
         }
 
     valid_db_finding_ids: Set[str] = set()
@@ -490,18 +501,20 @@ async def run_ai_analyst_pipeline(
 
     # Step 2: Try LLM Call, with fallback to deterministic generator if API fails or unconfigured
     try:
-        prompt = construct_prompt(anonymized_findings, industry_context)
+        prompt = construct_prompt(anonymized_findings, industry_context, company_info)
         raw_response = await call_llm_analyst(prompt)
         validated_result = validate_ai_synthesis(raw_response, valid_db_finding_ids)
     except Exception as err:
         logger.warning(f"[AI Analyst] LLM call failed or unconfigured ({err}). Using deterministic fallback synthesizer.")
-        validated_result = generate_fallback_synthesis(anonymized_findings, industry_context)
+        validated_result = generate_fallback_synthesis(anonymized_findings, industry_context, company_info, org_name)
 
     validated_result["anonymization_stats"] = {
         "findings_processed": len(findings),
         "pii_mappings": len(pii_mapping),
     }
     validated_result["industry_context"] = industry_context
+    validated_result["company_info"] = company_info
+    validated_result["org_name"] = org_name
 
     return validated_result
 
@@ -579,6 +592,16 @@ def generate_single_finding_fallback(finding: Dict[str, Any], industry_context: 
             f"Write-Host '[SUCCESS] MFA Conditional Access Policy deployed for {entity}' -ForegroundColor Green"
         )
         observation = f"Audit of identity policy for {entity} confirmed missing Conditional Access MFA controls."
+        remediation_steps = [
+            f"Authenticate via Microsoft Graph PowerShell using admin credentials for tenant {entity}.",
+            f"Deploy the Conditional Access MFA enforcement policy script targeting account {entity}.",
+            "Block legacy authentication protocols (SMTP, IMAP, POP3) under Entra Security Defaults.",
+            "Verify MFA enforcement state by inspecting sign-in logs under Microsoft Entra Admin Center."
+        ]
+        mitigating_controls = [
+            "Enforce FIDO2 / Passkey hardware keys for privileged administrator accounts.",
+            "Implement Microsoft Entra Risk-based Conditional Access policies."
+        ]
 
     elif any(p in issue_lower for p in ["port", "rdp", "ssh", "ftp", "smb", "database", "mysql", "postgres"]):
         root_cause = f"Perimeter network security group / firewall rules permit unauthenticated inbound traffic on management service ({issue}) exposed directly at asset {entity}."
@@ -597,6 +620,16 @@ def generate_single_finding_fallback(finding: Dict[str, Any], industry_context: 
             f"Get-NetFirewallRule -Name 'CyberGuard_Block_{fid}' | Format-Table DisplayName, Enabled, Action"
         )
         observation = f"External scan detected accessible port on {entity}. Network socket connection successfully established during audit."
+        remediation_steps = [
+            f"Review edge firewall, router ACLs, and cloud NSGs governing IP access for {entity}.",
+            f"Execute the block script to close public access to ports on {entity}.",
+            "Place administrative services behind a secure VPN gateway or Zero-Trust Access proxy.",
+            "Re-run CyberGuard EASM port probe to verify port closed status."
+        ]
+        mitigating_controls = [
+            "Implement IP Whitelisting allowing access strictly from authorized bastion subnets.",
+            "Enable automated Network Intrusion Prevention System (IPS) rate limiting."
+        ]
 
     elif any(d in issue_lower for d in ["dmarc", "spf", "dkim", "mail", "dns"]):
         root_cause = f"Domain Name System (DNS) records for domain/host {entity} miss strict email authentication policy headers (DMARC p=reject or SPF -all enforcement)."
@@ -609,6 +642,16 @@ def generate_single_finding_fallback(finding: Dict[str, Any], industry_context: 
             f"{entity}. IN TXT \"v=spf1 include:spf.protection.outlook.com -all\""
         )
         observation = f"DNS query for {entity} returned missing or weak DMARC policy enforcement."
+        remediation_steps = [
+            f"Access DNS Management portal for domain {entity}.",
+            f"Publish DMARC TXT record `_dmarc.{entity}` with `p=reject` enforcement policy.",
+            f"Update SPF TXT record at `{entity}` to end with `-all` (hard fail).",
+            "Verify DNS record propagation using DNS lookups or CyberGuard domain scanner."
+        ]
+        mitigating_controls = [
+            "Enable DKIM key signing for all outbound Exchange / O365 email flows.",
+            "Deploy Anti-Spoofing & Impersonation Filters under Defender for Office 365."
+        ]
 
     elif any(s in issue_lower for s in ["ssl", "tls", "header", "hsts", "csp", "certificate"]):
         root_cause = f"Web application configuration on host {entity} lacks mandatory security headers (HSTS, CSP, X-Frame-Options) or uses deprecated TLS protocol versions."
@@ -623,6 +666,16 @@ def generate_single_finding_fallback(finding: Dict[str, Any], industry_context: 
             f"add_header Referrer-Policy \"strict-origin-when-cross-origin\" always;"
         )
         observation = f"HTTP response headers inspection on {entity} revealed missing security flags."
+        remediation_steps = [
+            f"Open web server configuration file (Nginx / Apache / IIS) hosting {entity}.",
+            "Inject mandatory HSTS, CSP, X-Frame-Options, and X-Content-Type-Options response headers.",
+            "Disable outdated SSL 3.0, TLS 1.0, and TLS 1.1 protocol suites; enable TLS 1.2 and 1.3.",
+            "Reload web server daemon and verify header presence with `curl -I`."
+        ]
+        mitigating_controls = [
+            "Deploy Web Application Firewall (WAF) to enforce edge security header injection.",
+            "Automate 90-day SSL/TLS certificate renewal cycles."
+        ]
 
     else:
         root_cause = f"Automated perimeter security audit identified policy discrepancy '{issue}' on target asset {entity}."
@@ -634,12 +687,23 @@ def generate_single_finding_fallback(finding: Dict[str, Any], industry_context: 
             f"# Review evidence details for {entity} and apply localized patch"
         )
         observation = f"Automated verification rule triggered for {issue} on {entity}."
+        remediation_steps = [
+            f"Analyze telemetry evidence for asset {entity}.",
+            f"Execute localized hardening commands to remediate {issue}.",
+            "Re-scan target asset using CyberGuard to confirm issue resolution."
+        ]
+        mitigating_controls = [
+            "Maintain continuous security telemetry monitoring.",
+            "Apply principle of least privilege across target asset access controls."
+        ]
 
     return {
         "root_cause": root_cause,
         "impact": impact,
         "quick_fix": quick_fix,
         "observation": observation,
+        "remediation_steps": remediation_steps,
+        "mitigating_controls": mitigating_controls,
         "is_info": False,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -647,7 +711,8 @@ def generate_single_finding_fallback(finding: Dict[str, Any], industry_context: 
 
 async def run_single_finding_ai_synthesis(
     finding: Dict[str, Any],
-    industry_context: str = "Moroccan Banking Sector"
+    industry_context: str = "Enterprise Security Baseline",
+    company_info: str = ""
 ) -> Dict[str, Any]:
     """
     Generate tailored AI synthesis for a single security finding.
@@ -657,10 +722,13 @@ async def run_single_finding_ai_synthesis(
     anonymized_list, _ = anonymize_findings([finding])
     anon_finding = anonymized_list[0] if anonymized_list else finding
 
+    company_bg_block = f"\nTarget Company Background Context: {company_info}\n" if company_info else ""
+
     if api_key:
         prompt = f"""You are a Senior Cyber Threat Analyst providing a concise, technical finding synthesis for leadership and SOC engineers.
 
 Target Sector Context: {industry_context}
+{company_bg_block}
 Security Finding:
 - Finding ID: {anon_finding.get('finding_id')}
 - Issue Type: {anon_finding.get('issue_type')}

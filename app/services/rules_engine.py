@@ -737,7 +737,172 @@ def check_pim_eligible_admins(
 
 
 
-# ─── Runner ───────────────────────────────────────────────────────────────────
+# ─── Rule: SSPM-015 Defender Endpoint Protection Inactive ─────────────────────
+
+def check_defender_not_running(
+    managed_devices: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    SSPM-015 High — Microsoft Defender is disabled on an Intune-enrolled
+    Windows endpoint.
+
+    Detection strategy (ordered by reliability):
+
+    1. **windowsProtectionState** (primary — via per-device sub-resource):
+       The Graph client enriches each Windows device with its
+       ``_windowsProtectionState`` dict.  This contains authoritative booleans:
+         • ``realTimeProtectionEnabled``
+         • ``malwareProtectionEnabled``
+         • ``deviceState``  (``clean`` | ``fullScanPending`` | ``critical`` | ...)
+       A finding is raised when:
+         - ``realTimeProtectionEnabled`` is explicitly ``False``, OR
+         - ``malwareProtectionEnabled`` is explicitly ``False``, OR
+         - ``deviceState`` is in a critical/infected set
+
+    2. **Legacy top-level fields** (fallback — only when windowsProtectionState
+       is unavailable, e.g. 403/404):
+       ``windowsDefenderStatus`` / ``antiVirusScanState`` are checked only if
+       they contain an **explicitly unhealthy** value.  ``null`` / empty values
+       are NOT treated as unhealthy (they are the normal state for personal and
+       non-MDE enrolled devices).
+
+    3. **complianceState** (supplementary signal):
+       ``noncompliant`` is surfaced only when combined with other evidence
+       (missing protection state + noncompliant) to avoid noise on tenants
+       with misconfigured compliance policies.
+    """
+    findings = []
+    if not managed_devices:
+        return findings
+
+    # States that mean the device is actively infected or protection is broken
+    CRITICAL_DEVICE_STATES = {
+        "critical", "pendingFullScan", "pendingReboot",
+        "pendingManualSteps", "pendingOfflineScan",
+    }
+
+    # Explicitly unhealthy values for the legacy top-level fields
+    EXPLICITLY_DISABLED_DEFENDER = {
+        "disabled", "off", "inactive", "notrunning", "snoozed",
+        "realtimeprotectiondisabled", "tamperprotectiondisabled",
+    }
+    EXPLICITLY_DISABLED_AV = {
+        "notmonitored", "disabled", "off", "inactive",
+    }
+
+    for device in managed_devices:
+        device_name = device.get("deviceName") or "Unknown Device"
+        os_name = (device.get("operatingSystem") or "").lower()
+        upn = device.get("userPrincipalName") or "Unknown User"
+        owner_type = (device.get("managedDeviceOwnerType") or "unknown").lower()
+        compliance_state = (device.get("complianceState") or "unknown").lower()
+        last_sync = device.get("lastSyncDateTime")
+        os_version = device.get("osVersion") or "Unknown"
+
+        # Only check Windows devices — Defender is Windows-specific
+        if "windows" not in os_name:
+            continue
+
+        protection = device.get("_windowsProtectionState") or {}
+        flagged = False
+        reasons = []
+
+        if protection:
+            # ── Primary: use the authoritative windowsProtectionState ──
+            rtp = protection.get("realTimeProtectionEnabled")
+            mpe = protection.get("malwareProtectionEnabled")
+            dev_state = (protection.get("deviceState") or "").lower()
+
+            if rtp is False:
+                flagged = True
+                reasons.append("Real-Time Protection is OFF")
+            if mpe is False:
+                flagged = True
+                reasons.append("Malware Protection is OFF")
+            if dev_state in CRITICAL_DEVICE_STATES:
+                flagged = True
+                reasons.append(f"Device state is '{dev_state}'")
+        else:
+            # ── Fallback: use legacy top-level fields ──
+            # Only flag when we see an *explicitly* unhealthy value.
+            # null / empty is NOT unhealthy — it just means the field
+            # isn't populated for this device type.
+            defender_state = (device.get("windowsDefenderStatus") or "").strip().lower()
+            av_scan_state = (device.get("antiVirusScanState") or "").strip().lower()
+
+            if defender_state and defender_state in EXPLICITLY_DISABLED_DEFENDER:
+                flagged = True
+                reasons.append(f"Defender status is '{defender_state}'")
+            if av_scan_state and av_scan_state in EXPLICITLY_DISABLED_AV:
+                flagged = True
+                reasons.append(f"AV scan state is '{av_scan_state}'")
+
+            # Only flag noncompliant when we have NO protection state data
+            # AND the device is explicitly noncompliant — this avoids noise
+            # on devices that just haven't reported yet.
+            if compliance_state == "noncompliant" and not flagged:
+                flagged = True
+                reasons.append("Device is marked noncompliant in Intune (no Defender telemetry available)")
+
+        if not flagged:
+            continue
+
+        root_cause = "; ".join(reasons)
+        description = (
+            f"Microsoft Defender protection issue detected on endpoint "
+            f"'{device_name}': {root_cause}."
+        )
+
+        evidence = {
+            "device_name": device_name,
+            "primary_user_email": upn,
+            "operating_system": os_name.title(),
+            "os_version": os_version,
+            "intune_compliance_state": compliance_state,
+            "owner_type": owner_type,
+            "last_intune_sync": last_sync,
+            "description": description,
+            "reasons": reasons,
+            "remediation": (
+                "1. Open Windows Security > Virus & Threat Protection and ensure "
+                "Real-Time Protection is turned ON. "
+                "2. Verify Microsoft Defender Antivirus service is running "
+                "(Services > WinDefend > Start). "
+                "3. In Intune, verify device compliance policies require active "
+                "Defender monitoring. "
+                "4. Re-sync device status: Windows Settings > Accounts > "
+                "Access work or school > Info > Sync."
+            ),
+        }
+
+        # Enrich evidence with protection state details when available
+        if protection:
+            evidence["realTimeProtectionEnabled"] = protection.get("realTimeProtectionEnabled")
+            evidence["malwareProtectionEnabled"] = protection.get("malwareProtectionEnabled")
+            evidence["deviceState"] = protection.get("deviceState")
+            evidence["tamperProtectionEnabled"] = protection.get("tamperProtectionEnabled")
+            evidence["engineVersion"] = protection.get("engineVersion")
+            evidence["signatureVersion"] = protection.get("signatureVersion")
+        else:
+            evidence["defender_status"] = device.get("windowsDefenderStatus") or "N/A"
+            evidence["av_scan_state"] = device.get("antiVirusScanState") or "N/A"
+            evidence["note"] = (
+                "windowsProtectionState was unavailable for this device. "
+                "Detection based on legacy fields and compliance state."
+            )
+
+        findings.append({
+            "issue_type": "Endpoint Protection Disabled — Microsoft Defender Inactive",
+            "severity": "high",
+            "entity": f"Device: {device_name} ({upn})",
+            "evidence": evidence,
+            "tags": ["identity", "m365", "endpoint", "defender", "antivirus", "intune"],
+        })
+
+    return findings
+
+
+
 
 def run_all_rules(
     users: List[Dict[str, Any]],
@@ -754,6 +919,7 @@ def run_all_rules(
     sharepoint_settings: Dict[str, Any] = None,
     risky_users: List[Dict[str, Any]] = None,
     pim_assignments: List[Dict[str, Any]] = None,
+    managed_devices: List[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Run all M365 detection rules and return a flat list of findings."""
     all_findings = []
@@ -772,4 +938,5 @@ def run_all_rules(
     all_findings.extend(check_sharepoint_sharing(sharepoint_settings or {}))
     all_findings.extend(check_identity_protection_risky_users(risky_users or []))
     all_findings.extend(check_pim_eligible_admins(pim_assignments or [], directory_roles))
+    all_findings.extend(check_defender_not_running(managed_devices or []))
     return all_findings

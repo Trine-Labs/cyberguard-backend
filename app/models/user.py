@@ -27,6 +27,12 @@ class User(Base):
     totp_secret: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     is_totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_totp_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    
+    # Email OTP & Password Management
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    otp_code: Mapped[Optional[str]] = mapped_column(String(6), nullable=True)
+    otp_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     role: Mapped[str] = mapped_column(
         ENUM("admin", "viewer", name="user_role", create_type=False),
         default="admin", nullable=False

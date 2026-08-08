@@ -323,6 +323,50 @@ async def get_easm_overview(
         )
     ) or 0
 
+    # Fetch timestamp of latest scan job
+    last_job_res = await session.execute(
+        select(ScanJob.completed_at, ScanJob.started_at, ScanJob.created_at)
+        .where(and_(ScanJob.tenant_id == current_user.tenant_id, ScanJob.job_type == "easm"))
+        .order_by(ScanJob.created_at.desc())
+        .limit(1)
+    )
+    last_job = last_job_res.first()
+    last_scan_dt = (last_job[0] or last_job[1] or last_job[2]) if last_job else None
+
+    if not last_scan_dt:
+        async with get_tenant_db(str(tenant_id)) as db:
+            last_asset = await db.scalar(
+                select(func.max(EasmAsset.last_seen_at)).where(EasmAsset.tenant_id == tenant_id)
+            )
+            if last_asset:
+                last_scan_dt = last_asset
+
+    last_scan_at = last_scan_dt.isoformat() if last_scan_dt else None
+
+    # Fetch tenant scan frequency and compute next scheduled scan
+    from app.models.tenant import Tenant
+    from datetime import timedelta, timezone
+    tenant_res = await session.execute(select(Tenant.scan_frequency).where(Tenant.id == current_user.tenant_id))
+    scan_freq = tenant_res.scalar() or "daily"
+
+    freq_seconds = {
+        "hourly": 1 * 3600,
+        "two_hours": 2 * 3600,
+        "three_hours": 3 * 3600,
+        "six_hours": 6 * 3600,
+        "twice_daily": 12 * 3600,
+        "daily": 24 * 3600,
+        "weekly": 7 * 24 * 3600,
+    }.get(scan_freq, 24 * 3600)
+
+    next_scan_at = None
+    if last_scan_dt:
+        dt_calc = last_scan_dt
+        if dt_calc.tzinfo is None:
+            dt_calc = dt_calc.replace(tzinfo=timezone.utc)
+        next_dt = dt_calc + timedelta(seconds=freq_seconds)
+        next_scan_at = next_dt.isoformat()
+
     return {
         "total_domains": total_domains,
         "new_domains_week": 0,
@@ -338,6 +382,9 @@ async def get_easm_overview(
         "expiring_soon": expiring_soon,
         "brand_email_issues": brand_email_issues,
         "scan_pending": total_domains == 0,
+        "last_scan_at": last_scan_at,
+        "scan_frequency": scan_freq,
+        "next_scan_at": next_scan_at,
         
         # New overview metrics
         "total_vulnerabilities": total_vulns,
@@ -935,6 +982,8 @@ async def get_scan_status(
         
         # New multi-phase properties
         "phase": phase,
+        "current_step": meta.get("current_step", "discovery"),
+        "step_label": meta.get("step_label") or ("Running vulnerability scan..." if phase == "vuln" else "Probing subdomains & open services..."),
         "vuln_total": vuln_total,
         "vuln_completed": vuln_completed,
         "vuln_failed": vuln_failed,

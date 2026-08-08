@@ -223,16 +223,19 @@ async def get_m365_status(
         )
     )
     cred = result.scalar_one_or_none()
-    
     if not cred:
-        return {"connected": False, "status": None}
-    
+        return {"connected": False, "status": None, "last_sync_at": None}
+        
+    hub = cred.hub_state or {}
+    last_sync_at = hub.get("timestamp") or (cred.updated_at.isoformat() if cred.updated_at else (cred.connected_at.isoformat() if cred.connected_at else None))
+
     return {
         "connected": cred.token_status == "active",
         "status": cred.token_status,
         "ms_tenant_id": cred.ms_tenant_id,
         "granted_scopes": cred.granted_scopes,
         "connected_at": cred.connected_at.isoformat() if cred.connected_at else None,
+        "last_sync_at": last_sync_at,
     }
 
 
@@ -344,4 +347,10 @@ async def sync_m365_hub_state(
     from app.tasks.m365_scanner import run_m365_scan_background
     background_tasks.add_task(run_m365_scan_background, str(current_user.tenant_id))
     
+    try:
+        from fastapi_cache import FastAPICache
+        await FastAPICache.clear()
+    except Exception:
+        pass
+
     return {"status": "sync_started"}

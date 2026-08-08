@@ -1,0 +1,11 @@
+import paramiko
+c = paramiko.SSHClient()
+c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+c.connect('141.136.44.191', username='root', password='.+H@/Dz5jYxtzs,+')
+stdin, stdout, stderr = c.exec_command('docker ps --format "{{.Names}}: {{.Status}}"')
+print('--- Container Status ---')
+print(stdout.read().decode())
+stdin, stdout, stderr = c.exec_command('cd /root/cyberguard && docker compose logs celery_worker --tail=10 2>&1')
+print('--- Celery Worker Logs (last 10) ---')
+print(stdout.read().decode())
+c.close()

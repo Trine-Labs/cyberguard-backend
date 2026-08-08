@@ -494,5 +494,119 @@ class M365GraphClient:
             logger.debug(f"[SSPM] Could not fetch risky users: {e}")
             return []
 
+    # ─── Endpoint / Device Management (Intune) ───────────────────────────────
+
+    async def get_managed_devices(self) -> List[Dict[str, Any]]:
+        """
+        Fetch all Intune-managed devices and their Microsoft Defender health status.
+
+        Requires: DeviceManagementManagedDevices.Read.All application permission.
+
+        Key fields returned per device:
+          deviceName           — machine hostname
+          operatingSystem      — Windows, macOS, Linux, etc.
+          userPrincipalName    — primary signed-in user (UPN)
+          complianceState      — compliant | noncompliant | unknown | notApplicable
+          managedDeviceOwnerType — company | personal
+          windowsDefenderStatus — running | snoozed | disabled | notRunning | unknown
+          antiVirusScanState   — monitored | notMonitored | notApplicable
+          lastSyncDateTime     — ISO timestamp of last Intune check-in
+
+        A 403 means DeviceManagementManagedDevices.Read.All is not yet consented.
+        This is silently swallowed — the scan continues without this data.
+        """
+        endpoint = "/deviceManagement/managedDevices"
+        url = f"{self.BETA_URL}{endpoint}"
+        try:
+            response = await self.client.get(url)
+            status_code = response.status_code
+            await self._audit_log(endpoint, 0, status_code)
+
+            if status_code == 403:
+                logger.warning(
+                    "[SSPM] Managed devices: DeviceManagementManagedDevices.Read.All "
+                    "permission not consented — Defender endpoint check skipped. "
+                    "Add permission in Azure Portal and re-consent."
+                )
+                return []
+            if status_code == 404:
+                logger.debug("[SSPM] Managed devices endpoint returned 404 — Intune may not be licensed.")
+                return []
+            if status_code != 200:
+                err_text = response.text[:300] if response.text else ""
+                logger.warning(f"[SSPM] Managed devices returned {status_code}: {err_text}")
+                return []
+
+            data = response.json()
+            devices = data.get("value", [])
+
+            # Paginate if needed
+            next_link = data.get("@odata.nextLink")
+            while next_link:
+                page_resp = await self.client.get(next_link)
+                if page_resp.status_code != 200:
+                    break
+                page_data = page_resp.json()
+                devices.extend(page_data.get("value", []))
+                next_link = page_data.get("@odata.nextLink")
+
+            await self._audit_log(endpoint, len(devices), status_code)
+            logger.info(f"[SSPM] Managed devices: fetched {len(devices)} enrolled devices")
+
+            # ── Enrich Windows devices with windowsProtectionState ─────────
+            # The top-level windowsDefenderStatus / antiVirusScanState fields
+            # are null for personal / non-MDE devices. The per-device
+            # windowsProtectionState sub-resource is the only reliable source
+            # for realTimeProtectionEnabled, malwareProtectionEnabled, etc.
+            for device in devices:
+                os_name = (device.get("operatingSystem") or "").lower()
+                if "windows" not in os_name:
+                    continue
+                device_id = device.get("id")
+                if not device_id:
+                    continue
+                protection = await self._get_windows_protection_state(device_id)
+                if protection:
+                    device["_windowsProtectionState"] = protection
+
+            return devices
+
+        except Exception as e:
+            logger.warning(f"[SSPM] Could not fetch managed devices: {e}")
+            return []
+
+    async def _get_windows_protection_state(self, device_id: str) -> Dict[str, Any]:
+        """
+        Fetch the windowsProtectionState for a single managed device.
+
+        GET /deviceManagement/managedDevices/{id}/windowsProtectionState
+
+        Returns granular Defender health telemetry including:
+          realTimeProtectionEnabled  — bool
+          malwareProtectionEnabled   — bool
+          deviceState                — clean | fullScanPending | rebootPending | ...
+          networkInspectionSystemEnabled — bool
+          tamperProtectionEnabled    — bool
+          quickScanOverdue / fullScanOverdue / signatureUpdateOverdue — bool
+          engineVersion / signatureVersion / antiMalwareVersion — str
+
+        Returns an empty dict on any error (404 = Intune not licensed, 403 = missing permission).
+        """
+        endpoint = f"/deviceManagement/managedDevices/{device_id}/windowsProtectionState"
+        url = f"{self.BASE_URL}{endpoint}"
+        try:
+            response = await self.client.get(url)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.debug(
+                    f"[SSPM] windowsProtectionState for device {device_id}: "
+                    f"HTTP {response.status_code}"
+                )
+                return {}
+        except Exception as e:
+            logger.debug(f"[SSPM] Could not fetch windowsProtectionState for {device_id}: {e}")
+            return {}
+
     async def close(self):
         await self.client.aclose()

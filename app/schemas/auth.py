@@ -1,7 +1,7 @@
 """Pydantic schemas for authentication endpoints."""
 import re
 from typing import Optional
-from pydantic import BaseModel, EmailStr, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, field_validator
 
 
 class RegisterRequest(BaseModel):
@@ -20,16 +20,8 @@ class RegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def password_strength(cls, v: str) -> str:
-        if len(v) < 12:
-            raise ValueError("Password must be at least 12 characters long.")
-        if not re.search(r"[A-Z]", v):
-            raise ValueError("Password must contain at least one uppercase letter.")
-        if not re.search(r"[a-z]", v):
-            raise ValueError("Password must contain at least one lowercase letter.")
-        if not re.search(r"\d", v):
-            raise ValueError("Password must contain at least one digit.")
-        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
-            raise ValueError("Password must contain at least one special character.")
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long.")
         return v
 
 
@@ -37,19 +29,19 @@ class RegisterResponse(BaseModel):
     user_id: str
     tenant_id: str
     email: str
-    totp_secret: str       # Raw secret (for manual entry in authenticator app)
-    totp_qr_code: str      # data: URI PNG of QR code
+    totp_secret: str
+    totp_qr_code: str
 
 
 class TOTPVerifyRequest(BaseModel):
     user_id: str
-    code: str              # 6-digit TOTP code
+    code: str
 
     @field_validator("code")
     @classmethod
     def code_is_digits(cls, v: str) -> str:
         if not v.isdigit() or len(v) != 6:
-            raise ValueError("TOTP code must be exactly 6 digits.")
+            raise ValueError("Passcode must be exactly 6 digits.")
         return v
 
 
@@ -59,13 +51,14 @@ class LoginRequest(BaseModel):
 
 
 class LoginStep1Response(BaseModel):
-    """Returned after password check passes. Frontend prompts TOTP."""
+    """Returned after password check passes. Prompt Email OTP."""
     user_id: str
-    requires_totp: bool = True
-    message: str = "Password verified. Please enter your authenticator code."
+    email: str
+    requires_otp: bool = True
+    message: str = "Password verified. A 6-digit OTP passcode has been sent to your email."
 
 
-class LoginTOTPRequest(BaseModel):
+class LoginOTPVerifyRequest(BaseModel):
     user_id: str
     code: str
 
@@ -73,7 +66,23 @@ class LoginTOTPRequest(BaseModel):
     @classmethod
     def code_is_digits(cls, v: str) -> str:
         if not v.isdigit() or len(v) != 6:
-            raise ValueError("TOTP code must be exactly 6 digits.")
+            raise ValueError("OTP passcode must be exactly 6 digits.")
+        return v
+
+
+class ResendOTPRequest(BaseModel):
+    user_id: str
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: Optional[str] = None
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def new_password_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("New password must be at least 8 characters long.")
         return v
 
 
@@ -81,7 +90,8 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
-    expires_in: int         # seconds
+    expires_in: int
+    must_change_password: bool = False
 
 
 class RefreshTokenRequest(BaseModel):

@@ -9,14 +9,14 @@ logger = logging.getLogger(__name__)
 
 import shutil
 
-# Global lock to serialize Nuclei scans to prevent RAM exhaustion (OOM) on low-resource servers
+# Global lock: only ONE Nuclei scan at a time to avoid CPU abuse detection
 _NUCLEI_SEM = asyncio.Semaphore(1)
 
-# Hard cap on templates per phase — keeps scan time bounded on 512MB Render
-MAX_TEMPLATES_PER_PHASE = 80
+# Hard cap on templates per phase — conservative to keep CPU usage low
+MAX_TEMPLATES_PER_PHASE = 100
 
 # Hard timeout per Nuclei subprocess (seconds)
-NUCLEI_TIMEOUT = 600
+NUCLEI_TIMEOUT = 300
 
 class NucleiVerificationEngine:
     def __init__(self):
@@ -342,17 +342,18 @@ class NucleiVerificationEngine:
             "-json-export", export_file.replace(chr(92), '/'),
             "-silent",
             "-nc",
-            "-duc",             # Disable update checks which can hang
-            "-ni",              # Disable Interactsh (OAST) to prevent polling delays/hangs
-            "-no-stdin",        # Disable stdin processing to prevent hanging in background
-            "-mhe", "5",        # Max host errors before skipping host to save time
-            "-severity", "info,low,medium,high,critical",
-            "-timeout", "3",    # Per-request timeout in seconds
-            "-retries", "1",
-            "-bulk-size", "25",
-            "-rate-limit", "150",
-            "-c", "25",
-            "-rsr", "1048576"   # Limit response size read to 1MB to save RAM buffers
+            "-duc",             # Disable update checks
+            "-ni",              # Disable Interactsh (OAST) to prevent external polling
+            "-no-stdin",        # Disable stdin
+            "-mhe", "3",        # Max host errors before skipping
+            "-severity", "low,medium,high,critical",  # Skip info — reduces volume significantly
+            "-timeout", "5",    # Per-request timeout (longer = fewer retries)
+            "-retries", "0",    # No retries — reduces total requests
+            "-bulk-size", "20", # Templates per host batch (was 50)
+            "-rate-limit", "30", # Max 30 req/s total (was 500 — flagged as DDoS)
+            "-c", "10",         # Max 10 concurrent goroutines (was 50)
+            "-rsr", "524288",   # Limit response read to 512KB
+            "-headless-bulk-size", "1",  # Headless template concurrency
         ]
 
         # Pass -dast flag if running DAST templates

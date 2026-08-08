@@ -142,8 +142,11 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
+from app.routers.admin import router as admin_router
+
 # Mount routers
 app.include_router(auth_router)
+app.include_router(admin_router)
 app.include_router(onboarding_router)
 app.include_router(m365_router)
 app.include_router(dashboard_router)
