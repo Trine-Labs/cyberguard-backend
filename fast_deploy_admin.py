@@ -7,6 +7,7 @@ VPS_PASS = '.+H@/Dz5jYxtzs,+'
 backend_files = [
     (r'd:\CyberGuard\backend\app\routers\admin.py', '/root/cyberguard/backend/app/routers/admin.py'),
     (r'd:\CyberGuard\backend\app\routers\dashboard.py', '/root/cyberguard/backend/app/routers/dashboard.py'),
+    (r'd:\CyberGuard\backend\app\tasks\m365_scanner.py', '/root/cyberguard/backend/app/tasks/m365_scanner.py'),
 ]
 
 frontend_files = [

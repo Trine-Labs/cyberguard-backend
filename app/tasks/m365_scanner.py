@@ -173,6 +173,9 @@ async def _process_tenant(session: AsyncSession, cred: M365Credential):
             cred.last_used_at = datetime.now(timezone.utc)
             flag_modified(cred, "hub_state")
 
+            grant_client_ids = set(g.get("clientId") for g in grants if isinstance(g, dict) and g.get("clientId"))
+            active_apps_count = len(grant_client_ids) if grant_client_ids else len(service_principals)
+
             job.status = "completed"
             job.completed_at = datetime.now(timezone.utc)
             job.metadata_ = {
@@ -183,7 +186,7 @@ async def _process_tenant(session: AsyncSession, cred: M365Credential):
                 "guests_count": len(guest_accounts),
                 "findings_count": len(findings),
                 "roles_count": len(directory_roles),
-                "apps_count": len(service_principals),
+                "apps_count": active_apps_count,
             }
             await session.commit()
 
