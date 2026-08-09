@@ -423,3 +423,121 @@ async def delete_tenant(
         "message": f"Tenant '{org_name}' and all associated records deleted successfully.",
         "tenant_id": tid_str,
     }
+
+
+@router.get("/scan-jobs")
+async def get_admin_global_scan_jobs(
+    limit: int = 100,
+    offset: int = 0,
+    tenant_id: Optional[str] = Query(None),
+    job_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
+    session: AsyncSession = Depends(get_db),
+    admin_user: str = Depends(get_current_admin_user),
+):
+    """
+    Returns global scan jobs across ALL tenants for Platform Admins.
+    Supports multi-tenant filtering, sorting, searching, and summary stats.
+    """
+    await session.execute(text("SET LOCAL app.current_tenant_id = 'bypass'"))
+
+    tenants_res = await session.execute(
+        select(Tenant.id, Tenant.org_name, Tenant.contact_email).order_by(Tenant.org_name)
+    )
+    tenants_list = [
+        {"id": str(t.id), "org_name": t.org_name, "contact_email": t.contact_email}
+        for t in tenants_res.all()
+    ]
+
+    query = select(ScanJob, Tenant.org_name, Tenant.contact_email).outerjoin(
+        Tenant, ScanJob.tenant_id == Tenant.id
+    )
+
+    if tenant_id and tenant_id != "all":
+        try:
+            t_uuid = uuid.UUID(tenant_id)
+            query = query.where(ScanJob.tenant_id == t_uuid)
+        except ValueError:
+            pass
+
+    if job_type and job_type != "all":
+        query = query.where(ScanJob.job_type == job_type)
+
+    if status and status != "all":
+        query = query.where(ScanJob.status == status)
+
+    if sort_by == "duration":
+        sort_col = (ScanJob.completed_at - ScanJob.started_at)
+    elif sort_by == "status":
+        sort_col = ScanJob.status
+    elif sort_by == "tenant_name":
+        sort_col = Tenant.org_name
+    else:
+        sort_col = ScanJob.created_at
+
+    if sort_order == "asc":
+        query = query.order_by(sort_col.asc().nulls_last())
+    else:
+        query = query.order_by(sort_col.desc().nulls_last())
+
+    result = await session.execute(query.limit(limit).offset(offset))
+    rows = result.all()
+
+    all_summary_res = await session.execute(
+        select(
+            func.count(ScanJob.id).label("total_scans"),
+            func.count(func.nullif(ScanJob.status != 'completed', True)).label("completed_scans"),
+            func.count(func.nullif(ScanJob.status != 'failed', True)).label("failed_scans"),
+            func.count(func.nullif(~ScanJob.status.in_(['running', 'queued']), True)).label("active_scans"),
+            func.count(func.distinct(ScanJob.tenant_id)).label("unique_tenants_scanned"),
+            func.max(ScanJob.completed_at).label("last_scan_at")
+        )
+    )
+    sum_row = all_summary_res.one()
+
+    formatted_jobs = []
+    for job, org_name, contact_email in rows:
+        meta = job.metadata_ or {}
+        duration = 0
+        if job.started_at:
+            end_t = job.completed_at if job.completed_at else datetime.now(timezone.utc)
+            duration = max(0, int((end_t - job.started_at).total_seconds()))
+
+        label_map = {
+            "easm": "EASM Perimeter Scan",
+            "m365": "Microsoft 365 Identity Sync",
+            "baseline": "Security Baseline Audit",
+        }
+
+        formatted_jobs.append({
+            "id": str(job.id),
+            "tenant_id": str(job.tenant_id) if job.tenant_id else None,
+            "tenant_name": org_name or "Unknown Tenant",
+            "contact_email": contact_email or "N/A",
+            "job_type": job.job_type,
+            "job_type_label": label_map.get(job.job_type, job.job_type.upper()),
+            "status": job.status,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            "duration_seconds": duration,
+            "error_message": job.error_message,
+            "targets": meta.get("targets", []),
+            "metadata": meta,
+        })
+
+    return {
+        "jobs": formatted_jobs,
+        "total": len(formatted_jobs),
+        "tenants": tenants_list,
+        "summary": {
+            "total_scans": sum_row.total_scans or 0,
+            "completed_scans": sum_row.completed_scans or 0,
+            "failed_scans": sum_row.failed_scans or 0,
+            "active_scans": sum_row.active_scans or 0,
+            "unique_tenants_scanned": sum_row.unique_tenants_scanned or 0,
+            "last_scan_at": sum_row.last_scan_at.isoformat() if sum_row.last_scan_at else None,
+        }
+    }
