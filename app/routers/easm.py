@@ -990,5 +990,87 @@ async def get_scan_status(
     }
 
 
+@router.get("/scan-jobs")
+async def get_scan_jobs(
+    limit: int = 50,
+    offset: int = 0,
+    job_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Returns scan jobs history and active logs for the tenant.
+    Supports filtering by job_type and status with summary stats.
+    """
+    await set_rls_tenant(session, str(current_user.tenant_id))
+
+    query = select(ScanJob).where(ScanJob.tenant_id == current_user.tenant_id)
+    
+    if job_type and job_type != "all":
+        query = query.where(ScanJob.job_type == job_type)
+    if status and status != "all":
+        query = query.where(ScanJob.status == status)
+
+    query = query.order_by(ScanJob.created_at.desc())
+
+    result = await session.execute(query.limit(limit).offset(offset))
+    jobs = result.scalars().all()
+
+    # Calculate summary stats across all jobs for tenant
+    all_summary_res = await session.execute(
+        select(
+            func.count(ScanJob.id).label("total_scans"),
+            func.count(func.nullif(ScanJob.status != 'completed', True)).label("completed_scans"),
+            func.count(func.nullif(ScanJob.status != 'failed', True)).label("failed_scans"),
+            func.count(func.nullif(~ScanJob.status.in_(['running', 'queued']), True)).label("active_scans"),
+            func.max(ScanJob.completed_at).label("last_scan_at")
+        ).where(ScanJob.tenant_id == current_user.tenant_id)
+    )
+    sum_row = all_summary_res.one()
+
+    from datetime import datetime, timezone
+
+    formatted_jobs = []
+    for j in jobs:
+        meta = j.metadata_ or {}
+        duration = 0
+        if j.started_at:
+            end_t = j.completed_at if j.completed_at else datetime.now(timezone.utc)
+            duration = max(0, int((end_t - j.started_at).total_seconds()))
+
+        label_map = {
+            "easm": "EASM Perimeter Scan",
+            "m365": "Microsoft 365 Identity Sync",
+            "baseline": "Security Baseline Audit",
+        }
+
+        formatted_jobs.append({
+            "id": str(j.id),
+            "job_type": j.job_type,
+            "job_type_label": label_map.get(j.job_type, j.job_type.upper()),
+            "status": j.status,
+            "created_at": j.created_at.isoformat() if j.created_at else None,
+            "started_at": j.started_at.isoformat() if j.started_at else None,
+            "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+            "duration_seconds": duration,
+            "error_message": j.error_message,
+            "targets": meta.get("targets", []),
+            "metadata": meta,
+        })
+
+    return {
+        "jobs": formatted_jobs,
+        "total": len(formatted_jobs),
+        "summary": {
+            "total_scans": sum_row.total_scans or 0,
+            "completed_scans": sum_row.completed_scans or 0,
+            "failed_scans": sum_row.failed_scans or 0,
+            "active_scans": sum_row.active_scans or 0,
+            "last_scan_at": sum_row.last_scan_at.isoformat() if sum_row.last_scan_at else None,
+        }
+    }
+
+
 
 

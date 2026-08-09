@@ -55,6 +55,21 @@ def _is_scan_due(cred: M365Credential, tenant: Tenant) -> bool:
 
 
 async def _process_tenant(session: AsyncSession, cred: M365Credential):
+    from app.models.scan_job import ScanJob
+    job = ScanJob(
+        tenant_id=cred.tenant_id,
+        job_type="m365",
+        status="running",
+        started_at=datetime.now(timezone.utc),
+        metadata_={
+            "targets": ["Microsoft Entra ID / Microsoft 365"],
+            "step_label": "Refreshing OAuth token & initializing Graph client...",
+            "current_step": "init",
+        }
+    )
+    session.add(job)
+    await session.commit()
+
     try:
         # Decrypt refresh token and obtain a fresh access token
         blob = EncryptedBlob(ciphertext=cred.encrypted_refresh_token, kms_key_id=cred.kms_key_id)
@@ -157,6 +172,19 @@ async def _process_tenant(session: AsyncSession, cred: M365Credential):
             cred.hub_state = hub_state
             cred.last_used_at = datetime.now(timezone.utc)
             flag_modified(cred, "hub_state")
+
+            job.status = "completed"
+            job.completed_at = datetime.now(timezone.utc)
+            job.metadata_ = {
+                "targets": ["Microsoft Entra ID / Microsoft 365"],
+                "step_label": "Identity & Security controls sync completed",
+                "current_step": "completed",
+                "users_count": len(users),
+                "guests_count": len(guest_accounts),
+                "findings_count": len(findings),
+                "roles_count": len(directory_roles),
+                "apps_count": len(service_principals),
+            }
             await session.commit()
 
             logger.info(
@@ -169,6 +197,10 @@ async def _process_tenant(session: AsyncSession, cred: M365Credential):
             await client.close()
 
     except ValueError as ve:
+        job.status = "failed"
+        job.completed_at = datetime.now(timezone.utc)
+        job.error_message = str(ve)
+        await session.commit()
         if "revoked or expired" in str(ve):
             logger.warning(
                 f"Refresh token revoked/expired for tenant {cred.tenant_id}. Marking as expired."
@@ -178,6 +210,10 @@ async def _process_tenant(session: AsyncSession, cred: M365Credential):
         else:
             logger.error(f"ValueError scanning tenant {cred.tenant_id}: {ve}")
     except Exception as e:
+        job.status = "failed"
+        job.completed_at = datetime.now(timezone.utc)
+        job.error_message = str(e)
+        await session.commit()
         logger.error(f"Unhandled error scanning tenant {cred.tenant_id}: {e}", exc_info=True)
 
 
