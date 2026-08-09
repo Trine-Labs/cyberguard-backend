@@ -136,11 +136,11 @@ def _build_radar_signals(open_findings, max_signals=15):
     """
     ring_base_map = {"critical": 1.0, "high": 2.0, "medium": 3.0, "low": 4.0}
 
-    # Filter out info findings and separate by source
+    # Filter out info findings and separate by source FIRST before slicing
     actionable_findings = [f for f in open_findings if f.severity in ring_base_map]
 
-    m365_findings = [f for f in actionable_findings[:max_signals] if f.source == "m365"]
-    easm_findings = [f for f in actionable_findings[:max_signals] if f.source != "m365"]
+    m365_findings = [f for f in actionable_findings if f.source == "m365"][:max_signals]
+    easm_findings = [f for f in actionable_findings if f.source != "m365"][:max_signals]
 
     radar_signals = []
 
@@ -287,9 +287,21 @@ async def get_dashboard_overview(
     # 8. MTTR — computed from actual resolved findings
     mttr_days = _compute_mttr(resolved_findings)
 
-    # 9. Active signals list (for sidebar)
+    # 9. Active signals list (for sidebar) — balanced mix of M365 identity and EASM perimeter signals
+    m365_open = [f for f in open_findings if f.source == "m365"]
+    easm_open = [f for f in open_findings if f.source != "m365"]
+
+    mixed_findings = []
+    idx = 0
+    while len(mixed_findings) < 10 and (idx < len(m365_open) or idx < len(easm_open)):
+        if idx < len(m365_open):
+            mixed_findings.append(m365_open[idx])
+        if len(mixed_findings) < 10 and idx < len(easm_open):
+            mixed_findings.append(easm_open[idx])
+        idx += 1
+
     signals = []
-    for f in open_findings[:10]:
+    for f in mixed_findings:
         sig_id = str(f.id)
         signals.append({
             "id": sig_id,
