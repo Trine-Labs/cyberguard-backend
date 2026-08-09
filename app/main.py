@@ -143,6 +143,7 @@ app.add_middleware(
 )
 
 from app.routers.admin import router as admin_router
+from app.routers.phishing import router as phishing_router
 
 # Mount routers
 app.include_router(auth_router)
@@ -153,6 +154,7 @@ app.include_router(dashboard_router)
 app.include_router(easm_router)
 app.include_router(findings_router)
 app.include_router(settings_router)
+app.include_router(phishing_router)
 
 
 @app.get("/api/health", tags=["Health"])

@@ -5,19 +5,27 @@ VPS_USER = 'root'
 VPS_PASS = '.+H@/Dz5jYxtzs,+'
 
 backend_files = [
-    (r'd:\CyberGuard\backend\app\routers\admin.py', '/root/cyberguard/backend/app/routers/admin.py'),
-    (r'd:\CyberGuard\backend\app\routers\dashboard.py', '/root/cyberguard/backend/app/routers/dashboard.py'),
-    (r'd:\CyberGuard\backend\app\tasks\m365_scanner.py', '/root/cyberguard/backend/app/tasks/m365_scanner.py'),
+    (r'd:\CyberGuard\backend\app\models\phishing.py',         '/root/cyberguard/backend/app/models/phishing.py'),
+    (r'd:\CyberGuard\backend\app\models\__init__.py',         '/root/cyberguard/backend/app/models/__init__.py'),
+    (r'd:\CyberGuard\backend\app\services\email_service.py',   '/root/cyberguard/backend/app/services/email_service.py'),
+    (r'd:\CyberGuard\backend\app\services\phishing_service.py','/root/cyberguard/backend/app/services/phishing_service.py'),
+    (r'd:\CyberGuard\backend\app\routers\phishing.py',        '/root/cyberguard/backend/app/routers/phishing.py'),
+    (r'd:\CyberGuard\backend\app\main.py',                    '/root/cyberguard/backend/app/main.py'),
+    (r'd:\CyberGuard\backend\app\routers\admin.py',           '/root/cyberguard/backend/app/routers/admin.py'),
+    (r'd:\CyberGuard\backend\app\routers\dashboard.py',       '/root/cyberguard/backend/app/routers/dashboard.py'),
+    (r'd:\CyberGuard\backend\app\tasks\m365_scanner.py',      '/root/cyberguard/backend/app/tasks/m365_scanner.py'),
 ]
 
 frontend_files = [
-    (r'd:\CyberGuard\frontend\lib\api.ts',                             '/root/cyberguard/frontend/lib/api.ts'),
-    (r'd:\CyberGuard\frontend\app\dashboard\components\ScanLogs.tsx',  '/root/cyberguard/frontend/app/dashboard/components/ScanLogs.tsx'),
-    (r'd:\CyberGuard\frontend\app\dashboard\components\M365Hub.tsx',   '/root/cyberguard/frontend/app/dashboard/components/M365Hub.tsx'),
-    (r'd:\CyberGuard\frontend\app\admin\layout.tsx',                  '/root/cyberguard/frontend/app/admin/layout.tsx'),
-    (r'd:\CyberGuard\frontend\app\admin\page.tsx',                    '/root/cyberguard/frontend/app/admin/page.tsx'),
-    (r'd:\CyberGuard\frontend\app\admin\components\AdminScanLogs.tsx', '/root/cyberguard/frontend/app/admin/components/AdminScanLogs.tsx'),
-    (r'd:\CyberGuard\frontend\app\admin\scan-logs\page.tsx',          '/root/cyberguard/frontend/app/admin/scan-logs/page.tsx'),
+    (r'd:\CyberGuard\frontend\lib\api.ts',                                        '/root/cyberguard/frontend/lib/api.ts'),
+    (r'd:\CyberGuard\frontend\app\phished\page.tsx',                             '/root/cyberguard/frontend/app/phished/page.tsx'),
+    (r'd:\CyberGuard\frontend\app\dashboard\components\PhishingSimulations.tsx', '/root/cyberguard/frontend/app/dashboard/components/PhishingSimulations.tsx'),
+    (r'd:\CyberGuard\frontend\app\dashboard\components\M365Hub.tsx',              '/root/cyberguard/frontend/app/dashboard/components/M365Hub.tsx'),
+    (r'd:\CyberGuard\frontend\app\dashboard\components\ScanLogs.tsx',             '/root/cyberguard/frontend/app/dashboard/components/ScanLogs.tsx'),
+    (r'd:\CyberGuard\frontend\app\admin\layout.tsx',                             '/root/cyberguard/frontend/app/admin/layout.tsx'),
+    (r'd:\CyberGuard\frontend\app\admin\page.tsx',                               '/root/cyberguard/frontend/app/admin/page.tsx'),
+    (r'd:\CyberGuard\frontend\app\admin\components\AdminScanLogs.tsx',            '/root/cyberguard/frontend/app/admin/components/AdminScanLogs.tsx'),
+    (r'd:\CyberGuard\frontend\app\admin\scan-logs\page.tsx',                     '/root/cyberguard/frontend/app/admin/scan-logs/page.tsx'),
 ]
 
 print("Connecting to VPS...")
@@ -28,14 +36,12 @@ print("Connected!")
 
 sftp = c.open_sftp()
 
-for d in ['/root/cyberguard/frontend/app/admin/components', '/root/cyberguard/frontend/app/admin/scan-logs']:
-    try:
-        sftp.mkdir(d)
-    except Exception:
-        pass
+import posixpath
 
 print("\nUploading source files...")
 for local, remote in backend_files + frontend_files:
+    remote_dir = posixpath.dirname(remote)
+    c.exec_command(f"mkdir -p {remote_dir}")
     print(f"  -> {remote.split('/')[-1]}")
     sftp.put(local, remote)
 

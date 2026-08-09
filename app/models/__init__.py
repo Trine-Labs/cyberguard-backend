@@ -11,6 +11,7 @@ from app.models.scan_job import ScanJob
 from app.models.easm import EasmAsset, EasmPort, EasmCertificate
 from app.models.finding import Finding
 from app.models.m365_audit_log import M365AuditLog
+from app.models.phishing import PhishingCampaign, PhishingTarget, EmployeeSecurityScore
 
 __all__ = [
     "Tenant",
@@ -24,4 +25,7 @@ __all__ = [
     "EasmCertificate",
     "Finding",
     "M365AuditLog",
+    "PhishingCampaign",
+    "PhishingTarget",
+    "EmployeeSecurityScore",
 ]

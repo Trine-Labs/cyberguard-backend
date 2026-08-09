@@ -183,3 +183,9 @@ async def send_tenant_welcome_email_async(to_email: str, org_name: str, temp_pas
     html = _build_welcome_html(org_name, to_email, temp_password, target_url)
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, send_raw_email, to_email, f"Welcome to CyberGuard — Account Provisioned for {org_name}", html)
+
+
+async def send_email_async(to_email: str, subject: str, html_content: str, from_name: Optional[str] = None):
+    """Dispatch custom email asynchronously in background executor."""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, send_raw_email, to_email, subject, html_content)
