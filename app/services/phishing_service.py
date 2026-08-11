@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, and_
+from sqlalchemy.orm import selectinload
 
 from app.models.phishing import PhishingCampaign, PhishingTarget, EmployeeSecurityScore
 from app.models.finding import Finding
@@ -224,6 +225,32 @@ async def record_phishing_click(
         )
         session.add(finding)
 
+        # When employee score drops below 50, automatically create a CRITICAL severity finding
+        if emp_score.current_score < 50:
+            seq_res_crit = await session.execute(_text("SELECT nextval('findings_seq')"))
+            seq_num_crit = seq_res_crit.scalar()
+
+            crit_finding = Finding(
+                tenant_id=target.tenant_id,
+                finding_num=seq_num_crit,
+                severity="critical",
+                source="m365",
+                issue_type="Critical Employee Security Risk (Awareness Score Below 50)",
+                entity=target.employee_email,
+                evidence={
+                    "employee_name": target.employee_name,
+                    "employee_email": target.employee_email,
+                    "current_score": emp_score.current_score,
+                    "risk_tier": emp_score.risk_tier,
+                    "simulations_received": emp_score.simulations_received,
+                    "simulations_clicked": emp_score.simulations_clicked,
+                    "reason": "Employee security awareness score dropped below 50 due to phishing simulation clicks.",
+                    "last_phished_at": datetime.now(timezone.utc).isoformat(),
+                },
+                tags=["phishing_simulation", "critical_human_risk", "vulnerable_identity"]
+            )
+            session.add(crit_finding)
+
     await session.commit()
 
     return {
@@ -238,7 +265,10 @@ async def record_phishing_click(
 
 async def get_tenant_campaigns(session: AsyncSession, tenant_id: uuid.UUID) -> List[PhishingCampaign]:
     res = await session.execute(
-        select(PhishingCampaign).where(PhishingCampaign.tenant_id == tenant_id).order_by(PhishingCampaign.created_at.desc())
+        select(PhishingCampaign)
+        .options(selectinload(PhishingCampaign.targets))
+        .where(PhishingCampaign.tenant_id == tenant_id)
+        .order_by(PhishingCampaign.created_at.desc())
     )
     return res.scalars().all()
 

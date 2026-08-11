@@ -19,6 +19,8 @@ backend_files = [
 frontend_files = [
     (r'd:\CyberGuard\frontend\lib\api.ts',                                        '/root/cyberguard/frontend/lib/api.ts'),
     (r'd:\CyberGuard\frontend\app\phished\page.tsx',                             '/root/cyberguard/frontend/app/phished/page.tsx'),
+    (r'd:\CyberGuard\frontend\app\dashboard\layout.tsx',                          '/root/cyberguard/frontend/app/dashboard/layout.tsx'),
+    (r'd:\CyberGuard\frontend\app\dashboard\phishing\page.tsx',                 '/root/cyberguard/frontend/app/dashboard/phishing/page.tsx'),
     (r'd:\CyberGuard\frontend\app\dashboard\components\PhishingSimulations.tsx', '/root/cyberguard/frontend/app/dashboard/components/PhishingSimulations.tsx'),
     (r'd:\CyberGuard\frontend\app\dashboard\components\M365Hub.tsx',              '/root/cyberguard/frontend/app/dashboard/components/M365Hub.tsx'),
     (r'd:\CyberGuard\frontend\app\dashboard\components\ScanLogs.tsx',             '/root/cyberguard/frontend/app/dashboard/components/ScanLogs.tsx'),

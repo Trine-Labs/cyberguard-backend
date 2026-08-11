@@ -70,6 +70,20 @@ async def list_phishing_campaigns(
                 "clicks_count": c.clicks_count,
                 "click_rate": round((c.clicks_count / c.total_targets * 100), 1) if c.total_targets > 0 else 0.0,
                 "launched_at": c.launched_at.isoformat(),
+                "targets": [
+                    {
+                        "id": str(t.id),
+                        "employee_email": t.employee_email,
+                        "employee_name": t.employee_name,
+                        "status": t.status,
+                        "sent_at": t.sent_at.isoformat(),
+                        "clicked_at": t.clicked_at.isoformat() if t.clicked_at else None,
+                        "ip_address": t.ip_address,
+                        "user_agent": t.user_agent,
+                        "score_penalty": t.score_penalty,
+                    }
+                    for t in (c.targets or [])
+                ],
             }
             for c in campaigns
         ]
