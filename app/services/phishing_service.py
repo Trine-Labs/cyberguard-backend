@@ -365,3 +365,27 @@ async def reward_quiz_points(
         "risk_tier": emp_score.risk_tier,
         "reward_applied": True
     }
+
+
+async def reset_employee_score(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    employee_email: str
+) -> Optional[EmployeeSecurityScore]:
+    res = await session.execute(
+        select(EmployeeSecurityScore).where(
+            EmployeeSecurityScore.tenant_id == tenant_id,
+            EmployeeSecurityScore.employee_email == employee_email
+        )
+    )
+    score_obj = res.scalar_one_or_none()
+    if not score_obj:
+        return None
+
+    score_obj.current_score = 100
+    score_obj.risk_tier = "low_risk"
+    score_obj.simulations_clicked = 0
+    score_obj.simulations_reported = 0
+    await session.commit()
+    await session.refresh(score_obj)
+    return score_obj

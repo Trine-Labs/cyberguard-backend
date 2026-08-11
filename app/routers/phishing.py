@@ -115,11 +115,34 @@ async def list_employee_security_scores(
     }
 
 
+class ResetScoreRequest(BaseModel):
+    employee_email: str
+
 class SubmitCredentialsRequest(BaseModel):
     token: str
 
 class QuizRewardRequest(BaseModel):
     token: str
+
+
+@router.post("/scores/reset")
+async def reset_employee_score(
+    req: ResetScoreRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Subtle admin endpoint to reset an employee's security score back to 100 and low_risk tier.
+    """
+    score_obj = await phishing_service.reset_employee_score(db, current_user.tenant_id, req.employee_email)
+    if not score_obj:
+        raise HTTPException(status_code=404, detail="Employee security score record not found.")
+    return {
+        "message": f"Security awareness score for {req.employee_email} reset to 100.",
+        "employee_email": score_obj.employee_email,
+        "current_score": score_obj.current_score,
+        "risk_tier": score_obj.risk_tier,
+    }
 
 
 @router.get("/public/track")
