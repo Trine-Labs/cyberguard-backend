@@ -64,6 +64,51 @@ TEMPLATES: Dict[str, Dict[str, str]] = {
             <p style="font-size: 11px; color: #999;">Human Resources Compliance Portal</p>
         </div>
         """
+    },
+    "it_helpdesk_ticket": {
+        "subject": "Action Required: Global VPN & SSO Credential Re-Verification",
+        "sender_name": "IT Helpdesk & Global Security Operations",
+        "body_html": """
+        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+            <h3 style="color: #0b132b;">IT Security Audit Notice</h3>
+            <p>Hello <strong>{employee_name}</strong>,</p>
+            <p>Mandatory IT security audit requires re-verification of active corporate VPN and SSO credentials to prevent service interruption.</p>
+            <div style="margin: 25px 0;">
+                <a href="{tracking_url}" style="background-color: #0b132b; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Re-Verify VPN & SSO Credentials</a>
+            </div>
+            <p style="font-size: 11px; color: #999;">Global IT Operations Center</p>
+        </div>
+        """
+    },
+    "cloud_storage_shared": {
+        "subject": "Document Shared: Q3 Financial Audit & Executive Compensation Review.pdf",
+        "sender_name": "Cloud Workspace Document Service",
+        "body_html": """
+        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+            <h3 style="color: #2563eb;">Encrypted Cloud Document Share</h3>
+            <p>Dear <strong>{employee_name}</strong>,</p>
+            <p>A confidential financial audit report document has been shared with your corporate account.</p>
+            <div style="margin: 25px 0;">
+                <a href="{tracking_url}" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Decrypt & Access Shared Document</a>
+            </div>
+            <p style="font-size: 11px; color: #999;">Cloud Document Vault &copy; 2026</p>
+        </div>
+        """
+    },
+    "payroll_direct_deposit": {
+        "subject": "Urgent: Direct Deposit Account Re-Verification Required",
+        "sender_name": "Payroll & Benefits Operations",
+        "body_html": """
+        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+            <h3 style="color: #059669;">Direct Deposit Payroll Verification</h3>
+            <p>Hi <strong>{employee_name}</strong>,</p>
+            <p>Please confirm your direct deposit banking details prior to the upcoming payroll disbursement window.</p>
+            <div style="margin: 25px 0;">
+                <a href="{tracking_url}" style="background-color: #059669; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Confirm Direct Deposit Details</a>
+            </div>
+            <p style="font-size: 11px; color: #999;">Workday Payroll Operations</p>
+        </div>
+        """
     }
 }
 

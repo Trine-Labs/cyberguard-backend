@@ -191,6 +191,12 @@ async def track_phishing_click(
         redirect_url = f"{base_domain}/phish/invoice?t={t}"
     elif template_type == "hr_policy_update":
         redirect_url = f"{base_domain}/phish/hr?t={t}"
+    elif template_type == "it_helpdesk_ticket":
+        redirect_url = f"{base_domain}/phish/it?t={t}"
+    elif template_type == "cloud_storage_shared":
+        redirect_url = f"{base_domain}/phish/cloud?t={t}"
+    elif template_type == "payroll_direct_deposit":
+        redirect_url = f"{base_domain}/phish/payroll?t={t}"
     else:
         redirect_url = f"{base_domain}/phished?token={t}"
 
