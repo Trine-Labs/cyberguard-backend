@@ -245,18 +245,97 @@ async def record_phishing_click(
         emp_score.risk_tier = _compute_risk_tier(emp_score.current_score)
         emp_score.last_phished_at = datetime.now(timezone.utc)
 
-        # Automatically log a Security Finding in the database
+async def _upsert_finding(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    issue_type: str,
+    entity: str,
+    severity: str,
+    source: str,
+    evidence: Dict[str, Any],
+    tags: List[str]
+) -> Finding:
+    from sqlalchemy import func
+    res = await session.execute(
+        select(Finding).where(
+            Finding.tenant_id == tenant_id,
+            func.lower(Finding.entity) == entity.lower(),
+            Finding.issue_type == issue_type
+        ).order_by(Finding.created_at.desc())
+    )
+    existing = res.scalars().first()
+
+    now = datetime.now(timezone.utc)
+    if existing:
+        existing.status = "open"
+        existing.severity = severity
+        existing.last_seen_at = now
+        existing.resolved_at = None
+        existing.evidence = evidence
+        existing.tags = tags
+        existing.updated_at = now
+        return existing
+    else:
         from sqlalchemy import text as _text
         seq_res = await session.execute(_text("SELECT nextval('findings_seq')"))
         seq_num = seq_res.scalar()
-
         finding = Finding(
-            tenant_id=target.tenant_id,
+            tenant_id=tenant_id,
             finding_num=seq_num,
-            severity="high",
-            source="m365",
+            severity=severity,
+            source=source,
+            issue_type=issue_type,
+            entity=entity.lower(),
+            evidence=evidence,
+            tags=tags
+        )
+        session.add(finding)
+        return finding
+
+
+async def record_phishing_click(
+    session: AsyncSession,
+    token: str,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    res = await session.execute(
+        select(PhishingTarget).where(PhishingTarget.tracking_token == token)
+    )
+    target = res.scalar_one_or_none()
+    if not target:
+        return None
+
+    first_click = target.status != "clicked"
+    target.status = "clicked"
+    target.clicked_at = datetime.now(timezone.utc)
+    target.ip_address = ip_address
+    target.user_agent = user_agent
+
+    # Increment campaign click count
+    res_camp = await session.execute(
+        select(PhishingCampaign).where(PhishingCampaign.id == target.campaign_id)
+    )
+    campaign = res_camp.scalar_one_or_none()
+    if campaign and first_click:
+        campaign.clicks_count += 1
+
+    # Update employee score and risk tier
+    emp_score = await get_or_create_employee_score(session, target.tenant_id, target.employee_email, target.employee_name)
+    if first_click:
+        emp_score.simulations_clicked += 1
+        emp_score.current_score = max(0, emp_score.current_score - target.score_penalty)
+        emp_score.risk_tier = _compute_risk_tier(emp_score.current_score)
+        emp_score.last_phished_at = datetime.now(timezone.utc)
+
+        # Upsert Security Finding (updates existing finding if present)
+        await _upsert_finding(
+            session=session,
+            tenant_id=target.tenant_id,
             issue_type="Phishing Simulation Failure (Employee Compromise Risk)",
             entity=target.employee_email,
+            severity="high",
+            source="m365",
             evidence={
                 "employee_name": target.employee_name,
                 "campaign_title": campaign.title if campaign else "Phishing Simulation",
@@ -268,20 +347,16 @@ async def record_phishing_click(
             },
             tags=["phishing_simulation", "identity_risk", "human_factor"]
         )
-        session.add(finding)
 
-        # When employee score drops below 50, automatically create a CRITICAL severity finding
+        # When employee score drops below 50, upsert CRITICAL severity finding
         if emp_score.current_score < 50:
-            seq_res_crit = await session.execute(_text("SELECT nextval('findings_seq')"))
-            seq_num_crit = seq_res_crit.scalar()
-
-            crit_finding = Finding(
+            await _upsert_finding(
+                session=session,
                 tenant_id=target.tenant_id,
-                finding_num=seq_num_crit,
-                severity="critical",
-                source="m365",
                 issue_type="Critical Employee Security Risk (Awareness Score Below 50)",
                 entity=target.employee_email,
+                severity="critical",
+                source="m365",
                 evidence={
                     "employee_name": target.employee_name,
                     "employee_email": target.employee_email,
@@ -294,7 +369,6 @@ async def record_phishing_click(
                 },
                 tags=["phishing_simulation", "critical_human_risk", "vulnerable_identity"]
             )
-            session.add(crit_finding)
 
     await session.commit()
 
@@ -352,17 +426,14 @@ async def record_credential_submission(
         emp_score.risk_tier = _compute_risk_tier(emp_score.current_score)
         emp_score.last_phished_at = datetime.now(timezone.utc)
 
-        from sqlalchemy import text as _text
-        seq_res = await session.execute(_text("SELECT nextval('findings_seq')"))
-        seq_num = seq_res.scalar()
-
-        finding = Finding(
+        # Upsert Credential Harvesting Failure Finding (updates existing finding if present)
+        await _upsert_finding(
+            session=session,
             tenant_id=target.tenant_id,
-            finding_num=seq_num,
-            severity="critical",
-            source="m365",
             issue_type="Credential Harvesting Failure (High Risk Compromise)",
             entity=target.employee_email,
+            severity="critical",
+            source="m365",
             evidence={
                 "employee_name": target.employee_name,
                 "submitted_at": datetime.now(timezone.utc).isoformat(),
@@ -373,7 +444,6 @@ async def record_credential_submission(
             },
             tags=["phishing_simulation", "credential_harvesting", "critical_human_factor"]
         )
-        session.add(finding)
 
     await session.commit()
     return {
