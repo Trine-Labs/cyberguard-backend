@@ -389,3 +389,104 @@ async def reset_employee_score(
     await session.commit()
     await session.refresh(score_obj)
     return score_obj
+
+
+async def get_employee_activity_details(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    employee_email: str
+) -> Dict[str, Any]:
+    from sqlalchemy.orm import selectinload
+
+    score_res = await session.execute(
+        select(EmployeeSecurityScore).where(
+            EmployeeSecurityScore.tenant_id == tenant_id,
+            EmployeeSecurityScore.employee_email == employee_email
+        )
+    )
+    score_obj = score_res.scalar_one_or_none()
+
+    target_res = await session.execute(
+        select(PhishingTarget)
+        .options(selectinload(PhishingTarget.campaign))
+        .where(
+            PhishingTarget.tenant_id == tenant_id,
+            PhishingTarget.employee_email == employee_email
+        )
+        .order_by(PhishingTarget.sent_at.desc())
+    )
+    targets = target_res.scalars().all()
+
+    history = []
+    total_credentials_entered = 0
+
+    for t in targets:
+        events = []
+        if t.sent_at:
+            events.append({
+                "type": "sent",
+                "label": "Simulation Email Sent",
+                "timestamp": t.sent_at.isoformat(),
+                "severity": "info",
+                "details": f"Delivered via campaign '{t.campaign.title if t.campaign else 'Simulation'}'"
+            })
+        
+        if t.clicked_at:
+            events.append({
+                "type": "clicked",
+                "label": "Clicked Phishing Link",
+                "timestamp": t.clicked_at.isoformat(),
+                "severity": "warning",
+                "details": f"IP: {t.ip_address or 'Unknown'} | Device: {t.user_agent or 'Unknown Browser'}"
+            })
+
+        if t.submitted_credentials_at:
+            total_credentials_entered += 1
+            events.append({
+                "type": "submitted_credentials",
+                "label": "Entered Password / Credentials on Fake Portal",
+                "timestamp": t.submitted_credentials_at.isoformat(),
+                "severity": "critical",
+                "details": "Credential Harvesting Vulnerability detected (-15 score penalty)"
+            })
+
+        if t.quiz_reward_applied:
+            events.append({
+                "type": "quiz_reward",
+                "label": "Completed Micro-Security Quiz (+5 pts refunded)",
+                "timestamp": t.submitted_credentials_at.isoformat() if t.submitted_credentials_at else (t.clicked_at.isoformat() if t.clicked_at else t.sent_at.isoformat()),
+                "severity": "success",
+                "details": "Answered awareness quiz correctly following simulation fallback"
+            })
+
+        history.append({
+            "target_id": str(t.id),
+            "campaign_id": str(t.campaign_id),
+            "campaign_title": t.campaign.title if t.campaign else "Phishing Simulation",
+            "template_type": t.campaign.template_type if t.campaign else "password_reset",
+            "status": t.status,
+            "sent_at": t.sent_at.isoformat() if t.sent_at else None,
+            "clicked_at": t.clicked_at.isoformat() if t.clicked_at else None,
+            "submitted_credentials_at": t.submitted_credentials_at.isoformat() if t.submitted_credentials_at else None,
+            "quiz_reward_applied": t.quiz_reward_applied,
+            "ip_address": t.ip_address,
+            "user_agent": t.user_agent,
+            "score_penalty": t.score_penalty,
+            "events": events
+        })
+
+    return {
+        "employee": {
+            "name": score_obj.employee_name if score_obj else (targets[0].employee_name if targets else employee_email.split("@")[0].capitalize()),
+            "email": employee_email,
+            "department": score_obj.department if score_obj else "General",
+            "current_score": score_obj.current_score if score_obj else 100,
+            "risk_tier": score_obj.risk_tier if score_obj else "low_risk",
+            "simulations_received": score_obj.simulations_received if score_obj else len(targets),
+            "simulations_clicked": score_obj.simulations_clicked if score_obj else sum(1 for t in targets if t.clicked_at),
+            "simulations_reported": score_obj.simulations_reported if score_obj else 0,
+            "credentials_entered_count": total_credentials_entered,
+            "last_phished_at": score_obj.last_phished_at.isoformat() if (score_obj and score_obj.last_phished_at) else None,
+        },
+        "history": history
+    }

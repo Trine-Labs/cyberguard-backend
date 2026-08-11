@@ -145,6 +145,19 @@ async def reset_employee_score(
     }
 
 
+@router.get("/employees/{employee_email:path}/activity")
+async def get_employee_phishing_activity(
+    employee_email: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get comprehensive phishing audit trail, simulation clicks, credential entries, and score history for an employee.
+    """
+    data = await phishing_service.get_employee_activity_details(db, current_user.tenant_id, employee_email)
+    return data
+
+
 @router.get("/public/track")
 async def track_phishing_click(
     t: str,
