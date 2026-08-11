@@ -115,6 +115,13 @@ async def list_employee_security_scores(
     }
 
 
+class SubmitCredentialsRequest(BaseModel):
+    token: str
+
+class QuizRewardRequest(BaseModel):
+    token: str
+
+
 @router.get("/public/track")
 async def track_phishing_click(
     t: str,
@@ -123,15 +130,65 @@ async def track_phishing_click(
 ):
     """
     Public tracking endpoint executed when an employee clicks a simulated phishing link in an email.
-    Captures click metrics, reduces employee score, logs Finding, and redirects to /phished educational page.
+    Captures click metrics, reduces employee score, logs Finding, and redirects to realistic fake landing page.
     """
     ip = request.client.host if request.client else "unknown"
     user_agent = request.headers.get("user-agent", "unknown")
 
     res = await phishing_service.record_phishing_click(db, t, ip, user_agent)
     
-    redirect_url = f"https://cyberguardsystem.online/phished?token={t}"
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.phishing import PhishingTarget, PhishingCampaign
+    target_res = await db.execute(
+        select(PhishingTarget)
+        .options(selectinload(PhishingTarget.campaign))
+        .where(PhishingTarget.tracking_token == t)
+    )
+    target = target_res.scalar_one_or_none()
+    template_type = target.campaign.template_type if (target and target.campaign) else "password_reset"
+
+    base_domain = "https://cyberguardsystem.online"
+    if template_type == "password_reset":
+        redirect_url = f"{base_domain}/phish/login?t={t}"
+    elif template_type == "urgent_invoice":
+        redirect_url = f"{base_domain}/phish/invoice?t={t}"
+    elif template_type == "hr_policy_update":
+        redirect_url = f"{base_domain}/phish/hr?t={t}"
+    else:
+        redirect_url = f"{base_domain}/phished?token={t}"
+
     if res:
         redirect_url += f"&name={res['employee_name']}&score={res['current_score']}&penalty={res['score_penalty']}"
 
     return RedirectResponse(url=redirect_url, status_code=302)
+
+
+@router.post("/public/submit-credentials")
+async def submit_phishing_credentials(
+    req: SubmitCredentialsRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    ip = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "unknown")
+
+    res = await phishing_service.record_credential_submission(db, req.token, ip, user_agent)
+    if not res:
+        raise HTTPException(status_code=404, detail="Invalid phishing token.")
+
+    return {
+        "message": "Credentials captured in simulation.",
+        "redirect_url": f"https://cyberguardsystem.online/phished?token={req.token}&name={res['employee_name']}&score={res['current_score']}&penalty=40"
+    }
+
+
+@router.post("/public/quiz-reward")
+async def reward_quiz_points_endpoint(
+    req: QuizRewardRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    res = await phishing_service.reward_quiz_points(db, req.token)
+    if not res:
+        raise HTTPException(status_code=404, detail="Invalid phishing tracking token.")
+    return res

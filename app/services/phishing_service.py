@@ -278,3 +278,90 @@ async def get_tenant_employee_scores(session: AsyncSession, tenant_id: uuid.UUID
         select(EmployeeSecurityScore).where(EmployeeSecurityScore.tenant_id == tenant_id).order_by(EmployeeSecurityScore.current_score.asc())
     )
     return res.scalars().all()
+
+
+async def record_credential_submission(
+    session: AsyncSession,
+    token: str,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    res = await session.execute(
+        select(PhishingTarget).where(PhishingTarget.tracking_token == token)
+    )
+    target = res.scalar_one_or_none()
+    if not target:
+        return None
+
+    first_submission = target.status != "submitted_credentials"
+    target.status = "submitted_credentials"
+    target.submitted_credentials_at = datetime.now(timezone.utc)
+    if ip_address:
+        target.ip_address = ip_address
+    if user_agent:
+        target.user_agent = user_agent
+
+    emp_score = await get_or_create_employee_score(session, target.tenant_id, target.employee_email, target.employee_name)
+    if first_submission:
+        emp_score.current_score = max(0, emp_score.current_score - 15)
+        emp_score.risk_tier = _compute_risk_tier(emp_score.current_score)
+        emp_score.last_phished_at = datetime.now(timezone.utc)
+
+        from sqlalchemy import text as _text
+        seq_res = await session.execute(_text("SELECT nextval('findings_seq')"))
+        seq_num = seq_res.scalar()
+
+        finding = Finding(
+            tenant_id=target.tenant_id,
+            finding_num=seq_num,
+            severity="critical",
+            source="m365",
+            issue_type="Credential Harvesting Failure (High Risk Compromise)",
+            entity=target.employee_email,
+            evidence={
+                "employee_name": target.employee_name,
+                "submitted_at": datetime.now(timezone.utc).isoformat(),
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+                "score_penalty": 15,
+                "new_score": emp_score.current_score,
+            },
+            tags=["phishing_simulation", "credential_harvesting", "critical_human_factor"]
+        )
+        session.add(finding)
+
+    await session.commit()
+    return {
+        "employee_name": target.employee_name,
+        "employee_email": target.employee_email,
+        "current_score": emp_score.current_score,
+        "risk_tier": emp_score.risk_tier,
+    }
+
+
+async def reward_quiz_points(
+    session: AsyncSession,
+    token: str
+) -> Optional[Dict[str, Any]]:
+    res = await session.execute(
+        select(PhishingTarget).where(PhishingTarget.tracking_token == token)
+    )
+    target = res.scalar_one_or_none()
+    if not target:
+        return None
+
+    emp_score = await get_or_create_employee_score(session, target.tenant_id, target.employee_email, target.employee_name)
+    
+    if not target.quiz_reward_applied:
+        target.quiz_reward_applied = True
+        emp_score.current_score = min(100, emp_score.current_score + 5)
+        emp_score.risk_tier = _compute_risk_tier(emp_score.current_score)
+        await session.commit()
+
+    return {
+        "employee_name": target.employee_name,
+        "employee_email": target.employee_email,
+        "new_score": emp_score.current_score,
+        "risk_tier": emp_score.risk_tier,
+        "reward_applied": True
+    }

@@ -4,7 +4,7 @@ CyberGuard — Phishing Simulation & Employee Security Awareness Models
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, DateTime, Integer, String, Text, ForeignKey, Enum as PgEnum
+    Column, DateTime, Integer, String, Text, ForeignKey, Boolean, Enum as PgEnum
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -49,12 +49,14 @@ class PhishingTarget(Base):
     employee_email = Column(String(255), nullable=False, index=True)
     employee_name = Column(String(255), nullable=False)
     tracking_token = Column(String(64), nullable=False, unique=True, index=True)
-    status = Column(String(50), nullable=False, default="sent")  # sent, opened, clicked, reported
+    status = Column(String(50), nullable=False, default="sent")  # sent, opened, clicked, submitted_credentials, reported
     sent_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     clicked_at = Column(DateTime(timezone=True), nullable=True)
+    submitted_credentials_at = Column(DateTime(timezone=True), nullable=True)
     ip_address = Column(String(64), nullable=True)
     user_agent = Column(Text, nullable=True)
     score_penalty = Column(Integer, nullable=False, default=25)
+    quiz_reward_applied = Column(Boolean, nullable=False, default=False)
 
     campaign = relationship("PhishingCampaign", back_populates="targets")
 

@@ -19,6 +19,9 @@ backend_files = [
 frontend_files = [
     (r'd:\CyberGuard\frontend\lib\api.ts',                                        '/root/cyberguard/frontend/lib/api.ts'),
     (r'd:\CyberGuard\frontend\app\phished\page.tsx',                             '/root/cyberguard/frontend/app/phished/page.tsx'),
+    (r'd:\CyberGuard\frontend\app\phish\login\page.tsx',                         '/root/cyberguard/frontend/app/phish/login/page.tsx'),
+    (r'd:\CyberGuard\frontend\app\phish\invoice\page.tsx',                       '/root/cyberguard/frontend/app/phish/invoice/page.tsx'),
+    (r'd:\CyberGuard\frontend\app\phish\hr\page.tsx',                            '/root/cyberguard/frontend/app/phish/hr/page.tsx'),
     (r'd:\CyberGuard\frontend\app\dashboard\layout.tsx',                          '/root/cyberguard/frontend/app/dashboard/layout.tsx'),
     (r'd:\CyberGuard\frontend\app\dashboard\phishing\page.tsx',                 '/root/cyberguard/frontend/app/dashboard/phishing/page.tsx'),
     (r'd:\CyberGuard\frontend\app\dashboard\components\PhishingSimulations.tsx', '/root/cyberguard/frontend/app/dashboard/components/PhishingSimulations.tsx'),
