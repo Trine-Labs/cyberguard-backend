@@ -372,6 +372,9 @@ async def reset_employee_score(
     tenant_id: uuid.UUID,
     employee_email: str
 ) -> Optional[EmployeeSecurityScore]:
+    from sqlalchemy import func
+    from app.models.finding import Finding
+
     res = await session.execute(
         select(EmployeeSecurityScore).where(
             EmployeeSecurityScore.tenant_id == tenant_id,
@@ -386,6 +389,23 @@ async def reset_employee_score(
     score_obj.risk_tier = "low_risk"
     score_obj.simulations_clicked = 0
     score_obj.simulations_reported = 0
+
+    # Automatically resolve all open security findings for this employee
+    findings_res = await session.execute(
+        select(Finding).where(
+            Finding.tenant_id == tenant_id,
+            func.lower(Finding.entity) == employee_email.lower(),
+            Finding.status != "resolved"
+        )
+    )
+    open_findings = findings_res.scalars().all()
+
+    now = datetime.now(timezone.utc)
+    for f in open_findings:
+        f.status = "resolved"
+        f.resolved_at = now
+        f.updated_at = now
+
     await session.commit()
     await session.refresh(score_obj)
     return score_obj
