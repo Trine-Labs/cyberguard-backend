@@ -206,6 +206,17 @@ async def track_phishing_click(
     return RedirectResponse(url=redirect_url, status_code=302)
 
 
+@router.get("/public/target-details")
+async def get_phishing_target_details(
+    t: str,
+    db: AsyncSession = Depends(get_db),
+):
+    res = await phishing_service.get_target_details_by_token(db, t)
+    if not res:
+        raise HTTPException(status_code=404, detail="Invalid phishing tracking token.")
+    return res
+
+
 @router.post("/public/submit-credentials")
 async def submit_phishing_credentials(
     req: SubmitCredentialsRequest,

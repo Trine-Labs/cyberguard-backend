@@ -625,3 +625,27 @@ async def get_employee_activity_details(
         },
         "history": history
     }
+
+
+async def get_target_details_by_token(
+    session: AsyncSession,
+    token: str
+) -> Optional[Dict[str, Any]]:
+    res = await session.execute(
+        select(PhishingTarget).where(PhishingTarget.tracking_token == token)
+    )
+    target = res.scalar_one_or_none()
+    if not target:
+        return None
+
+    emp_score = await get_or_create_employee_score(session, target.tenant_id, target.employee_email, target.employee_name)
+
+    return {
+        "employee_name": target.employee_name,
+        "employee_email": target.employee_email,
+        "current_score": emp_score.current_score,
+        "score_penalty": target.score_penalty,
+        "risk_tier": emp_score.risk_tier,
+        "status": target.status,
+        "quiz_reward_applied": target.quiz_reward_applied,
+    }
