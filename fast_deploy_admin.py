@@ -59,22 +59,22 @@ for local, remote in sync_pairs:
 
 sftp.close()
 
-# Copy backend files into running container & restart backend
-print("\n[1/2] Updating backend container...")
+# Copy backend files into running container & rebuild image
+print("\n[1/2] Rebuilding backend container image on VPS...")
 c.exec_command('docker cp /root/cyberguard/backend/app/. cyberguard_backend:/app/app/')
 c.exec_command('docker cp /root/cyberguard/backend/app/. cyberguard_celery:/app/app/')
-stdin, stdout, stderr = c.exec_command('cd /root/cyberguard && docker compose restart backend celery 2>&1')
-print(f"  Backend restart exit: {stdout.channel.recv_exit_status()}")
+stdin, stdout, stderr = c.exec_command('cd /root/cyberguard && docker compose build backend celery 2>&1')
+print(f"  Backend build exit: {stdout.channel.recv_exit_status()}")
 
 # Rebuild frontend image
 print("\n[2/2] Rebuilding frontend container image on VPS...")
 stdin, stdout, stderr = c.exec_command('cd /root/cyberguard && docker compose build frontend 2>&1')
 exit_code = stdout.channel.recv_exit_status()
 out = stdout.read().decode('utf-8', errors='ignore')
-print(f"  Build exit: {exit_code}\n  Output tail:\n{out[-500:] if len(out) > 500 else out}")
+print(f"  Frontend build exit: {exit_code}\n  Output tail:\n{out[-500:] if len(out) > 500 else out}")
 
-print("\nStarting frontend container...")
-stdin, stdout, stderr = c.exec_command('cd /root/cyberguard && docker compose up -d frontend 2>&1')
+print("\nStarting backend and frontend containers...")
+stdin, stdout, stderr = c.exec_command('cd /root/cyberguard && docker compose up -d backend celery frontend 2>&1')
 print(f"  Up exit: {stdout.channel.recv_exit_status()}")
 
 time.sleep(4)
