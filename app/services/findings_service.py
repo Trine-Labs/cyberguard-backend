@@ -62,9 +62,21 @@ async def upsert_m365_findings(
             )
             session.add(finding)
             
+    PHISHING_TAGS = {"phishing_simulation", "identity_risk", "human_factor", "credential_harvesting"}
+    PHISHING_TYPES = {
+        "Phishing Simulation Failure (Employee Compromise Risk)",
+        "Critical Employee Security Risk (Awareness Score Below 50)",
+        "Credential Harvesting Failure (High Risk Compromise)",
+    }
+
     # Resolve open findings that are no longer present in this scan pass
     for key, existing in open_map.items():
         if key not in active_keys:
+            # DO NOT auto-resolve phishing simulation findings during M365 tenant scan passes
+            has_phishing_tag = any(t in PHISHING_TAGS for t in (existing.tags or []))
+            if existing.issue_type in PHISHING_TYPES or has_phishing_tag:
+                continue
+
             existing.status = "resolved"
             existing.resolved_at = datetime.utcnow()
             
