@@ -189,3 +189,58 @@ async def send_email_async(to_email: str, subject: str, html_content: str, from_
     """Dispatch custom email asynchronously in background executor."""
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, send_raw_email, to_email, subject, html_content)
+
+
+def _build_password_reset_html(otp_code: str) -> str:
+    """Build responsive HTML template for Password Reset Passcode."""
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0F0F0F; color: #E2E8F0; margin: 0; padding: 24px; }}
+        .container {{ max-width: 520px; margin: 0 auto; background: #141414; border: 1px solid #262626; border-radius: 12px; padding: 32px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }}
+        .brand {{ text-align: center; margin-bottom: 24px; }}
+        .brand-title {{ font-size: 22px; font-weight: 800; color: #FFFFFF; letter-spacing: -0.5px; }}
+        .brand-accent {{ color: #D4342A; }}
+        .otp-box {{ background: #1A1A1A; border: 1px solid #333333; border-radius: 8px; padding: 20px; text-align: center; margin: 24px 0; }}
+        .otp-code {{ font-family: 'JetBrains Mono', Consolas, monospace; font-size: 36px; font-weight: 800; color: #D4342A; letter-spacing: 8px; margin: 0; }}
+        .notice {{ font-size: 13px; color: #A3A3A3; line-height: 1.6; text-align: center; margin-top: 16px; }}
+        .footer {{ text-align: center; margin-top: 32px; font-size: 12px; color: #737373; border-top: 1px solid #262626; padding-top: 16px; }}
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="brand">
+          <div class="brand-title">Cyber<span class="brand-accent">Guard</span></div>
+          <div style="font-size: 12px; color: #A3A3A3; margin-top: 4px;">Password Reset Request</div>
+        </div>
+        
+        <h2 style="font-size: 18px; margin-bottom: 8px; text-align: center; color: #FFFFFF;">Password Reset Passcode</h2>
+        <p style="font-size: 14px; color: #A3A3A3; text-align: center; margin: 0 0 20px;">Use the 6-digit passcode below to reset your CyberGuard account password.</p>
+        
+        <div class="otp-box">
+          <div class="otp-code">{otp_code}</div>
+        </div>
+        
+        <div class="notice">
+          This passcode is valid for <strong>15 minutes</strong>. If you did not request a password reset, please ignore this email or contact security.
+        </div>
+        
+        <div class="footer">
+          CyberGuard Continuous Threat & Attack Surface Management Platform
+        </div>
+      </div>
+    </body>
+    </html>
+    """
+
+
+async def send_password_reset_email_async(to_email: str, otp_code: str):
+    """Dispatch Password Reset OTP passcode asynchronously in background."""
+    print(f"\n[PASSWORD RESET OTP] Code for {to_email}: ===> {otp_code} <===\n")
+    html = _build_password_reset_html(otp_code)
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, send_raw_email, to_email, "CyberGuard — Password Reset Request", html)
+

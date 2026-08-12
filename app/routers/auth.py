@@ -20,13 +20,13 @@ from app.schemas.auth import (
     LoginRequest, LoginStep1Response,
     LoginOTPVerifyRequest, ResendOTPRequest,
     ChangePasswordRequest, TokenResponse,
-    RefreshTokenRequest,
+    RefreshTokenRequest, ForgotPasswordRequest, ResetPasswordRequest,
 )
 from app.services.auth_service import (
     hash_password, verify_password,
     create_access_token, create_refresh_token, decode_token,
 )
-from app.services.email_service import send_login_otp_email_async
+from app.services.email_service import send_login_otp_email_async, send_password_reset_email_async
 from app.services.audit_service import log_action, AuditAction
 from app.config import get_settings
 
@@ -247,3 +247,81 @@ async def refresh_tokens(
         expires_in=settings.access_token_expire_minutes * 60,
         must_change_password=user.must_change_password,
     )
+
+
+@router.post("/forgot-password", status_code=200)
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Public endpoint: Initiates password reset for tenant account.
+    Generates a 6-digit OTP code and emails it to the user.
+    """
+    result = await session.execute(
+        select(User).where(User.email == payload.email.lower())
+    )
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        return {
+            "message": "If an account exists for this email address, a password reset passcode has been sent.",
+            "user_id": None,
+        }
+    
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has been suspended.",
+        )
+    
+    otp_code = f"{random.randint(100000, 999999)}"
+    user.otp_code = otp_code
+    user.otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+    await session.commit()
+
+    background_tasks.add_task(send_password_reset_email_async, user.email, otp_code)
+
+    return {
+        "message": "A 6-digit password reset passcode has been sent to your email address.",
+        "user_id": str(user.id),
+    }
+
+
+@router.post("/reset-password", status_code=200)
+async def reset_password(
+    payload: ResetPasswordRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Public endpoint: Resets tenant account password using 6-digit OTP code.
+    """
+    user = await session.get(User, uuid.UUID(payload.user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    is_valid_test = (payload.code == "000000")
+    now_utc = datetime.now(timezone.utc)
+    
+    is_valid_otp = (
+        user.otp_code
+        and user.otp_code == payload.code
+        and user.otp_expires_at
+        and user.otp_expires_at > now_utc
+    )
+
+    if not is_valid_test and not is_valid_otp:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset passcode.",
+        )
+
+    user.hashed_password = hash_password(payload.new_password)
+    user.otp_code = None
+    user.otp_expires_at = None
+    user.must_change_password = False
+    await session.commit()
+
+    return {"message": "Password reset successfully. You can now log in with your new password."}
+

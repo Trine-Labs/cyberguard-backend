@@ -31,8 +31,8 @@ class Settings(BaseSettings):
     # JWT
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 1440000  # Increased for testing
-    refresh_token_expire_days: int = 30
+    access_token_expire_minutes: int = 720  # 12 hours
+    refresh_token_expire_days: int = 7
 
     # Encryption (Fernet — local KMS stand-in for Phase 1)
     fernet_encryption_key: str

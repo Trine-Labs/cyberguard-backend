@@ -96,3 +96,28 @@ class TokenResponse(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    user_id: str
+    code: str
+    new_password: str
+
+    @field_validator("code")
+    @classmethod
+    def code_is_digits(cls, v: str) -> str:
+        if not v.isdigit() or len(v) != 6:
+            raise ValueError("Reset code must be exactly 6 digits.")
+        return v
+
+    @field_validator("new_password")
+    @classmethod
+    def new_password_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("New password must be at least 8 characters long.")
+        return v
+
