@@ -29,7 +29,7 @@ class Finding(Base):
         nullable=False
     )
     source = Column(
-        PgEnum("m365", "ext_scanner", "manual", name="finding_source"),
+        PgEnum("m365", "ext_scanner", "manual", "human_risk", "phishing", name="finding_source"),
         nullable=False
     )
     issue_type = Column(String(255), nullable=False)

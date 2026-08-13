@@ -335,7 +335,7 @@ async def record_phishing_click(
             issue_type="Phishing Simulation Failure (Employee Compromise Risk)",
             entity=target.employee_email,
             severity="high",
-            source="m365",
+            source="human_risk",
             evidence={
                 "employee_name": target.employee_name,
                 "campaign_title": campaign.title if campaign else "Phishing Simulation",
@@ -348,15 +348,15 @@ async def record_phishing_click(
             tags=["phishing_simulation", "identity_risk", "human_factor"]
         )
 
-        # When employee score drops below 50, upsert CRITICAL severity finding
-        if emp_score.current_score < 50:
+        # When employee score drops below 75, upsert CRITICAL severity finding
+        if emp_score.current_score < 75:
             await _upsert_finding(
                 session=session,
                 tenant_id=target.tenant_id,
-                issue_type="Critical Employee Security Risk (Awareness Score Below 50)",
+                issue_type="Critical Employee Security Risk (Awareness Score Below 75)",
                 entity=target.employee_email,
                 severity="critical",
-                source="m365",
+                source="human_risk",
                 evidence={
                     "employee_name": target.employee_name,
                     "employee_email": target.employee_email,
@@ -364,7 +364,7 @@ async def record_phishing_click(
                     "risk_tier": emp_score.risk_tier,
                     "simulations_received": emp_score.simulations_received,
                     "simulations_clicked": emp_score.simulations_clicked,
-                    "reason": "Employee security awareness score dropped below 50 due to phishing simulation clicks.",
+                    "reason": "Employee security awareness score dropped below 75 due to phishing simulation clicks.",
                     "last_phished_at": datetime.now(timezone.utc).isoformat(),
                 },
                 tags=["phishing_simulation", "critical_human_risk", "vulnerable_identity"]
@@ -433,7 +433,7 @@ async def record_credential_submission(
             issue_type="Credential Harvesting Failure (High Risk Compromise)",
             entity=target.employee_email,
             severity="critical",
-            source="m365",
+            source="human_risk",
             evidence={
                 "employee_name": target.employee_name,
                 "submitted_at": datetime.now(timezone.utc).isoformat(),
@@ -444,6 +444,28 @@ async def record_credential_submission(
             },
             tags=["phishing_simulation", "credential_harvesting", "critical_human_factor"]
         )
+
+        # Also trigger Critical Employee Security Risk if score drops below 75
+        if emp_score.current_score < 75:
+            await _upsert_finding(
+                session=session,
+                tenant_id=target.tenant_id,
+                issue_type="Critical Employee Security Risk (Awareness Score Below 75)",
+                entity=target.employee_email,
+                severity="critical",
+                source="human_risk",
+                evidence={
+                    "employee_name": target.employee_name,
+                    "employee_email": target.employee_email,
+                    "current_score": emp_score.current_score,
+                    "risk_tier": emp_score.risk_tier,
+                    "simulations_received": emp_score.simulations_received,
+                    "simulations_clicked": emp_score.simulations_clicked,
+                    "reason": "Employee security awareness score dropped below 75 due to phishing simulation clicks.",
+                    "last_phished_at": datetime.now(timezone.utc).isoformat(),
+                },
+                tags=["phishing_simulation", "critical_human_risk", "vulnerable_identity"]
+            )
 
     await session.commit()
     return {
