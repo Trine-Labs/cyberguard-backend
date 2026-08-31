@@ -158,6 +158,30 @@ async def get_employee_phishing_activity(
     return data
 
 
+def extract_client_ip(request: Request) -> str:
+    """
+    Extract the real client public IP address, inspecting proxy headers (X-Forwarded-For, X-Real-IP).
+    """
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        client_ip = xff.split(",")[0].strip()
+        if client_ip:
+            return client_ip
+
+    x_real_ip = request.headers.get("x-real-ip")
+    if x_real_ip and x_real_ip.strip():
+        return x_real_ip.strip()
+
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip and cf_ip.strip():
+        return cf_ip.strip()
+
+    if request.client and request.client.host:
+        return request.client.host
+
+    return "unknown"
+
+
 @router.get("/public/track")
 async def track_phishing_click(
     t: str,
@@ -168,7 +192,7 @@ async def track_phishing_click(
     Public tracking endpoint executed when an employee clicks a simulated phishing link in an email.
     Captures click metrics, reduces employee score, logs Finding, and redirects to realistic fake landing page.
     """
-    ip = request.client.host if request.client else "unknown"
+    ip = extract_client_ip(request)
     user_agent = request.headers.get("user-agent", "unknown")
 
     res = await phishing_service.record_phishing_click(db, t, ip, user_agent)
@@ -223,7 +247,7 @@ async def submit_phishing_credentials(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    ip = request.client.host if request.client else "unknown"
+    ip = extract_client_ip(request)
     user_agent = request.headers.get("user-agent", "unknown")
 
     res = await phishing_service.record_credential_submission(db, req.token, ip, user_agent)

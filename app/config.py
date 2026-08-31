@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     nvd_api_key: str = ""
     open_ai_api: str = ""
     ai_model: str = "luna"
+    ollama_api_key: str = "a5bc04474714414a97f9306870a757ce.BhCyM9WL7gd5tKUwc1b0Ft_j"
+    ollama_base_url: str = "https://ollama.com"
+    ollama_model: str = "gpt-oss:120b-cloud"
 
     # Have I Been Pwned (HIBP) — Domain breach search (requires HIBP Enterprise key)
     hibp_api_key: str = ""

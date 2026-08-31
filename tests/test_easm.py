@@ -41,6 +41,9 @@ class TestSubdomainEnumeration:
             "sub3.example.com",
             "SUB2.EXAMPLE.COM"
         ])
+        mocker.patch("app.services.easm.subdomain._dns_implicit_subdomains", return_value=[
+            "mail.example.com"
+        ])
         mocker.patch("app.services.easm.subdomain._active_subdomain_bruteforce", return_value=[
             "api.example.com"
         ])
@@ -50,6 +53,7 @@ class TestSubdomainEnumeration:
         assert "sub1.example.com" in subdomains
         assert "sub2.example.com" in subdomains
         assert "sub3.example.com" in subdomains
+        assert "mail.example.com" in subdomains
         assert "api.example.com" in subdomains
         assert "example.com" not in subdomains
         assert "external-domain.com" not in subdomains
@@ -293,3 +297,104 @@ class TestEASMAPIEndpoints:
             headers=test_tenant_data["headers"]
         )
         assert response.status_code in (200, 400)
+
+
+# ── 7. CVE Precision & Finding Consolidation Unit Tests ────────────────────────
+class TestCVEPrecisionAndConsolidation:
+    @pytest.mark.asyncio
+    async def test_cve_lookup_strict_version_guardrail(self):
+        """Generic technologies without exact numeric versions must return zero CVEs."""
+        from app.services.cve_service import CveLookupService
+        svc = CveLookupService()
+
+        # Generic tech with no version -> 0 CVEs
+        empty_ver_cves = await svc.get_cves_for_tech("Apache", "")
+        assert len(empty_ver_cves) == 0
+
+        non_numeric_ver_cves = await svc.get_cves_for_tech("PHP", "latest")
+        assert len(non_numeric_ver_cves) == 0
+
+        # Exact outdated version -> returns curated high/critical CVEs
+        apache_cves = await svc.get_cves_for_tech("Apache", "2.4.49")
+        assert len(apache_cves) > 0
+        assert any(c["cve_id"] == "CVE-2021-41773" for c in apache_cves)
+        assert all(c.get("cvss_score", 0) >= 7.0 for c in apache_cves)
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_consolidated_cve_findings_generation(self, db_session: AsyncSession, test_tenant_data: dict):
+        """Exact-version CVEs must be consolidated into a single High/Critical card per technology."""
+        from app.services.easm.findings import _generate_findings
+        from app.models.finding import Finding
+
+        tid = test_tenant_data["tenant_id"]
+        cve_data = [
+            {
+                "cve_id": "CVE-2021-41773",
+                "cvss_score": 9.8,
+                "severity": "critical",
+                "description": "Path traversal flaw in Apache 2.4.49",
+                "tech_name": "Apache HTTP Server 2.4.49"
+            },
+            {
+                "cve_id": "CVE-2021-42013",
+                "cvss_score": 9.8,
+                "severity": "critical",
+                "description": "RCE flaw in Apache 2.4.49",
+                "tech_name": "Apache HTTP Server 2.4.49"
+            }
+        ]
+
+        await _generate_findings(
+            tenant_id=tid,
+            hostname="web.testcorp.com",
+            http_result={"status": 200, "sec_headers_grade": "A", "sec_headers_score": 90},
+            cert_info={"issuer": "Let's Encrypt", "is_expired": False, "days_to_expiry": 60, "is_self_signed": False, "is_mismatch": False},
+            open_risky_ports=[],
+            sensitive_paths=[],
+            email_security={"spf": "v=spf1 -all", "dmarc": "v=DMARC1; p=reject", "dmarc_policy": "reject"},
+            is_exposed_admin=False,
+            cve_data=cve_data,
+            nuclei_data=[],
+            asset_criticality="medium",
+            session=db_session
+        )
+        await db_session.commit()
+
+        # Query created findings
+        res = await db_session.execute(
+            select(Finding).where(Finding.tenant_id == tid, Finding.entity == "web.testcorp.com")
+        )
+        findings = res.scalars().all()
+        
+        cve_findings = [f for f in findings if "Outdated Component:" in f.issue_type]
+        assert len(cve_findings) == 1
+        assert "Apache HTTP Server 2.4.49" in cve_findings[0].issue_type
+        assert cve_findings[0].severity in ("critical", "high")
+        assert cve_findings[0].evidence["vulnerability_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_admin_trigger_tenant_scan_endpoint(self, async_client: AsyncClient, test_tenant_data: dict, db_session: AsyncSession, mocker):
+        """Platform Admin POST /api/v1/admin/tenants/{id}/scan triggers automated scan pipeline."""
+        mocker.patch("app.routers.admin.run_easm_scan", return_value=None)
+        
+        # Issue platform admin token
+        from app.services.auth_service import create_access_token
+        admin_token = create_access_token(
+            user_id="admin",
+            tenant_id="00000000-0000-0000-0000-000000000000",
+            role="platform_admin"
+        )
+        
+        tid = test_tenant_data["tenant_id"]
+        response = await async_client.post(
+            f"/api/v1/admin/tenants/{tid}/scan",
+            headers={"Authorization": f"Bearer {admin_token}"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "job_id" in data
+        assert data["tenant_id"] == str(tid)
+        assert len(data["targets"]) >= 1
+

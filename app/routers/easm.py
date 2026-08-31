@@ -5,7 +5,7 @@ All data is read from the DB (populated by easm_scanner.py).
 """
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi_cache.decorator import cache
 from app.cache_utils import tenant_key_builder
@@ -367,6 +367,54 @@ async def get_easm_overview(
         next_dt = dt_calc + timedelta(seconds=freq_seconds)
         next_scan_at = next_dt.isoformat()
 
+    # 4. Identities Category Metrics (Employee Accounts & Leaked Identities)
+    identities_total = 0
+    identities_vulns = 0
+    try:
+        from app.models.phishing import EmployeeSecurityScore
+        identities_total = await session.scalar(
+            select(func.count(EmployeeSecurityScore.id)).where(EmployeeSecurityScore.tenant_id == current_user.tenant_id)
+        ) or 0
+    except Exception:
+        identities_total = 0
+
+    try:
+        identities_vulns = await session.scalar(
+            select(func.count(Finding.id)).where(
+                and_(
+                    Finding.tenant_id == current_user.tenant_id,
+                    Finding.status == "open",
+                    or_(
+                        Finding.source.in_(["human_risk", "phishing"]),
+                        Finding.issue_type.ilike("%phishing%"),
+                        Finding.issue_type.ilike("%awareness%"),
+                        Finding.issue_type.ilike("%credential%")
+                    )
+                )
+            )
+        ) or 0
+
+        if identities_total == 0:
+            identities_total = await session.scalar(
+                select(func.count(func.distinct(Finding.entity))).where(
+                    and_(
+                        Finding.tenant_id == current_user.tenant_id,
+                        or_(
+                            Finding.source.in_(["human_risk", "phishing"]),
+                            Finding.issue_type.ilike("%phishing%"),
+                            Finding.issue_type.ilike("%awareness%"),
+                            Finding.issue_type.ilike("%credential%")
+                        )
+                    )
+                )
+            ) or 0
+    except Exception:
+        pass
+
+    top_identity_providers = []
+    if identities_total > 0 or identities_vulns > 0:
+        top_identity_providers = ["HIBP Leaks", "Exposed Passwords", "Phishing Risk"]
+
     return {
         "total_domains": total_domains,
         "new_domains_week": 0,
@@ -406,11 +454,6 @@ async def get_easm_overview(
                 "vulnerabilities": brand_email_issues,
                 "providers": top_email_providers
             },
-            "identities": {
-                "total": 0, 
-                "vulnerabilities": 0,
-                "providers": []
-            },
             "infrastructure": {
                 "total": infra_count, 
                 "vulnerabilities": critical_vulns + high_vulns,
@@ -434,14 +477,26 @@ async def get_easm_recent_hits(
     result = await session.execute(q)
     findings = result.scalars().all()
     
+    import ipaddress
     hits = []
     for f in findings:
+        entity_clean = f.entity or ""
+        host_part = entity_clean.split(":")[0].strip()
+        has_port = ":" in entity_clean
+        is_port_finding = "port" in (f.issue_type or "").lower() or has_port
+        is_ip = False
+        try:
+            ipaddress.ip_address(host_part)
+            is_ip = True
+        except ValueError:
+            is_ip = False
+
         hits.append({
             "id": str(f.id),
             "date_found": f.created_at.isoformat() if f.created_at else None,
             "issue_type": f.issue_type,
             "asset": f.entity,
-            "asset_type": "Domain" if ":" not in f.entity else "IPV4",
+            "asset_type": "ipv4" if (is_ip or is_port_finding) else "domain",
             "severity": f.severity,
         })
     return {"hits": hits}

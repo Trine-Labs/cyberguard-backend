@@ -176,11 +176,10 @@ async def reverify_and_purge_false_positives(session: AsyncSession, tenant_id: u
             resolved_count += 1
             continue
 
-        # Rule 2b: Purge pure INFO noise & individual header/CVE log spam
+        # Rule 2b: Purge deprecated legacy header findings & individual CVE log spam
         issue_type_lower = (f.issue_type or "").lower()
         if (
-            f.severity == "info"
-            or f.issue_type == "Poor Security Headers"
+            f.issue_type == "Poor Security Headers"
             or issue_type_lower.startswith("verified cross-origin-")
             or issue_type_lower.startswith("verified permissions-")
             or issue_type_lower.startswith("verified content-security-")

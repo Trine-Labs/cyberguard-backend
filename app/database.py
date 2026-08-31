@@ -1,5 +1,5 @@
 """
-CyberGuard Backend — Async Database Connection (Neon DB / PostgreSQL)
+CyberGuard Backend — Async Database Connection (PostgreSQL)
 Uses SQLAlchemy 2.0 async engine + asyncpg driver.
 """
 from contextlib import asynccontextmanager
@@ -20,49 +20,36 @@ settings = get_settings()
 
 def _fix_database_url(url: str) -> str:
     """
-    Neon DB (and most PostgreSQL providers) give connection strings that start
-    with 'postgresql://' or 'postgres://' — both of which SQLAlchemy resolves
-    to the sync psycopg2 driver.
-
-    This function rewrites the scheme to 'postgresql+asyncpg://' so the async
+    Rewrites the database URL scheme to 'postgresql+asyncpg://' so the async
     driver is always used, regardless of what format the user pastes.
     """
     if url.startswith("postgres://"):
         url = "postgresql+asyncpg://" + url[len("postgres://"):]
     elif url.startswith("postgresql://"):
         url = "postgresql+asyncpg://" + url[len("postgresql://"):]
-        
+
     # Strip query parameters (like ?sslmode=require or ?channel_binding=...)
     # because asyncpg does not support them and will throw TypeErrors.
     if "?" in url:
         url = url.split("?")[0]
-        
+
     return url
 
 
 _database_url = _fix_database_url(settings.database_url)
 
 # ── Async Engine ──────────────────────────────────────────────────────────────
-# Performance notes for Neon serverless + pgbouncer pooler:
-#  - echo=False always: SQL logging at DEBUG adds huge stdout overhead
-#  - pool_pre_ping=False: Neon's pgbouncer pooler manages connection health;
-#    pre-ping adds an extra RTT on every checkout — don't use it with a pooler
-#  - pool_size=10: keep warm connections ready for concurrent requests
-#  - statement_cache_size=0: disables asyncpg prepared-statement cache which
-#    can cause InvalidCachedStatementError after schema changes (Neon caveat)
-#  - pool_recycle=1800: recycle connections every 30 min to avoid Neon timeouts
+# Local PostgreSQL (Docker container) — no SSL, no Neon-specific workarounds.
 engine = create_async_engine(
     _database_url,
     echo=False,
-    pool_size=40,              # Support concurrent scatter-gather queries
-    max_overflow=10,            # Limit burst
-    pool_timeout=30,           # Fail fast if pool is exhausted
-    pool_recycle=1800,         # Recycle every 30 mins to avoid Neon drops
-    pool_pre_ping=True,        # Must be True to catch connections dropped by Neon/pgbouncer
+    pool_size=20,               # Sufficient for local PostgreSQL
+    max_overflow=10,             # Limit burst
+    pool_timeout=30,             # Fail fast if pool is exhausted
+    pool_pre_ping=True,          # Detect stale connections
     connect_args={
-        "ssl": True,
-        "timeout": 60,              # asyncpg connection timeout
-        "command_timeout": 60,      # asyncpg query timeout
+        "timeout": 60,               # asyncpg connection timeout
+        "command_timeout": 60,       # asyncpg query timeout
     },
 )
 

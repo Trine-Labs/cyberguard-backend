@@ -27,6 +27,7 @@ from app.services.easm import (
     _detect_tech_stack,
     _enumerate_subdomains,
     _generate_findings,
+    _generate_subdomain_info_finding,
     _get_catch_all_details,
     _get_tenant_lock,
     _get_wappalyzer,

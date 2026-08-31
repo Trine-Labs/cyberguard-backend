@@ -555,3 +555,5 @@ def generate_audit_pdf(
     doc.build(story)
     buf.seek(0)
     return buf.read()
+
+

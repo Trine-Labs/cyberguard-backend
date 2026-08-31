@@ -165,6 +165,7 @@ async def login_step2_verify_otp(
         user_id=str(user.id),
         tenant_id=str(user.tenant_id),
         role=user.role,
+        email=user.email,
     )
     refresh_token, _ = create_refresh_token(
         user_id=str(user.id),
@@ -188,6 +189,10 @@ async def login_step2_verify_otp(
         refresh_token=refresh_token,
         expires_in=settings.access_token_expire_minutes * 60,
         must_change_password=user.must_change_password,
+        user_id=str(user.id),
+        tenant_id=str(user.tenant_id),
+        email=user.email,
+        role=user.role,
     )
 
 
@@ -205,8 +210,14 @@ async def change_password(
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
-    if payload.old_password and not verify_password(payload.old_password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+    if not user.must_change_password:
+        if not payload.old_password:
+            raise HTTPException(status_code=400, detail="Current password is required.")
+        if not verify_password(payload.old_password, user.hashed_password):
+            raise HTTPException(status_code=400, detail="Current password is incorrect.")
+    else:
+        if payload.old_password and not verify_password(payload.old_password, user.hashed_password):
+            raise HTTPException(status_code=400, detail="Current password is incorrect.")
 
     user.hashed_password = hash_password(payload.new_password)
     user.must_change_password = False

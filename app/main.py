@@ -46,13 +46,17 @@ async def _warmup_pool():
                 await conn.execute(text("SELECT 'open'::finding_status, 'critical'::finding_severity, 'active'::asset_status"))
 
         
-        # Fire 10 concurrent connections to warm up the pool
-        # Wrapping in wait_for to prevent infinite hangs if Neon rate limits the connection storm
-        await asyncio.wait_for(
-            asyncio.gather(*[ping_db() for _ in range(10)]), 
-            timeout=15.0
-        )
-        
+        # Ensure executive_syntheses persistence table exists
+        async with engine.begin() as conn:
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS executive_syntheses (
+                    tenant_id UUID PRIMARY KEY,
+                    synthesis JSONB NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            """))
+
         logger.info("[CyberGuard] Connection pool warmed up (10 connections)")
     except Exception as e:
         logger.warning(f"[CyberGuard] Pool warmup failed (non-fatal): {e}")
@@ -98,12 +102,8 @@ async def lifespan(app: FastAPI):
     # Warm up connection pool blocking startup so first request isn't slow
     await _warmup_pool()
     
-    # Start background keep-alive to prevent Neon cold starts
-    keep_alive_task = asyncio.create_task(_keep_db_alive())
-    
     yield
     
-    keep_alive_task.cancel()
     logger.info("[CyberGuard] API shutting down")
     # Dispose engine to cleanly close all pooled connections
     from app.database import engine
@@ -117,8 +117,8 @@ app = FastAPI(
     title="CyberGuard API",
     description="Multi-tenant Cybersecurity SaaS — External Attack Surface Management + M365 Identity Security",
     version="1.0.0",
-    docs_url="/api/docs",   # Always available in dev
-    redoc_url="/api/redoc",
+    docs_url="/docs",
+    redoc_url="/redoc",
     lifespan=lifespan,
 )
 
@@ -157,11 +157,14 @@ app.include_router(settings_router)
 app.include_router(phishing_router)
 
 
+@app.get("/health", tags=["Health"])
 @app.get("/api/health", tags=["Health"])
+@app.get("/api/v1/health", tags=["Health"])
 async def health_check():
     return {
         "status": "healthy",
         "service": "CyberGuard API",
         "version": "1.0.0",
+        "database": "postgresql (local container)",
         "environment": settings.app_env,
     }

@@ -79,6 +79,10 @@ async def _process_tenant(session: AsyncSession, cred: M365Credential):
         new_refresh_token = token_data.get("refresh_token")
 
         if not access_token:
+            job.status = "failed"
+            job.completed_at = datetime.now(timezone.utc)
+            job.error_message = "Failed to obtain access token from Microsoft Graph (refresh token expired or invalid)"
+            await session.commit()
             logger.error(f"Failed to refresh access token for tenant {cred.tenant_id}")
             return
 
@@ -292,7 +296,25 @@ async def _scan_all_tenants_async():
                     and_(ScanScope.tenant_id == t.id, ScanScope.type == "domain")
                 )
             )
-            scope_values = [s for s in scopes_res.scalars().all()]
+            scope_values = [s.strip().lower() for s in scopes_res.scalars().all() if s and s.strip()]
+
+            # If tenant has no explicit scan scope, derive from corporate contact email
+            if not scope_values and t.contact_email and "@" in t.contact_email:
+                email_domain = t.contact_email.split("@")[-1].strip().lower()
+                settings_obj = get_settings()
+                blocked_domains = [d.strip().lower() for d in settings_obj.blocked_email_domains.split(",") if d.strip()]
+                if email_domain not in blocked_domains:
+                    scope_values = [email_domain]
+                    # Automatically persist scope for future scans
+                    new_scope = ScanScope(
+                        tenant_id=t.id,
+                        type="domain",
+                        value=email_domain,
+                        verified=True,
+                    )
+                    session.add(new_scope)
+                    await session.commit()
+
             if not scope_values:
                 continue
 

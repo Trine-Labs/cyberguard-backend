@@ -23,7 +23,10 @@ from app.services.easm.config import (
     _is_ip,
     logger,
 )
-from app.services.easm.findings import _generate_findings
+from app.services.easm.findings import (
+    _generate_findings,
+    _generate_subdomain_info_finding,
+)
 from app.services.easm.hibp import _run_hibp_scan
 from app.services.easm.nuclei import _run_nuclei_phase
 from app.services.easm.probes import (
@@ -97,14 +100,29 @@ async def _scan_domain_inner(
     geoip_info = await _resolve_geoip(ip_address)
     is_catch_all = http_result.get("is_catch_all", False)
 
+    GENERAL_WEB_SERVICES = ("HTTP", "HTTP-Alt", "HTTPS", "HTTPS-Alt")
     open_web_urls = set()
     if http_result.get("final_url"):
         open_web_urls.add(http_result["final_url"])
 
+    hn_lower = hostname.lower()
     for (port, svc, risk), is_open in port_results.items():
-        if is_open and svc in ("HTTP", "HTTP-Alt", "HTTPS", "HTTPS-Alt"):
+        if not is_open:
+            continue
+        if svc in GENERAL_WEB_SERVICES:
             scheme = "https" if "HTTPS" in svc else "http"
             open_web_urls.add(f"{scheme}://{hostname}:{port}")
+        elif "cPanel" in svc and "cpanel" in hn_lower:
+            scheme = "https" if "HTTPS" in svc else "http"
+            open_web_urls.add(f"{scheme}://{hostname}:{port}")
+        elif "WHM" in svc and "whm" in hn_lower:
+            scheme = "https" if "HTTPS" in svc else "http"
+            open_web_urls.add(f"{scheme}://{hostname}:{port}")
+        elif "Webmail" in svc and "webmail" in hn_lower:
+            scheme = "https" if "HTTPS" in svc else "http"
+            open_web_urls.add(f"{scheme}://{hostname}:{port}")
+        elif "Webmin" in svc and "webmin" in hn_lower:
+            open_web_urls.add(f"https://{hostname}:{port}")
 
     sensitive_findings = []
     if do_web:
@@ -134,7 +152,18 @@ async def _scan_domain_inner(
     do_email = (not modules or "email" in modules) and not _is_ip(hostname)
     email_security = await _check_email_security(hostname) if do_email else {}
 
-    is_admin = any(kw in hostname for kw in ["admin", "portal", "manage", "cpanel", "wp-admin", "phpmyadmin"])
+    ADMIN_KEYWORDS = ["admin", "portal", "manage", "cpanel", "whm", "webmin", "wp-admin", "phpmyadmin", "kibana", "grafana", "dashboard"]
+    UTILITY_EXCLUSIONS = {"autodiscover", "autoconfig", "mail", "email", "smtp", "imap", "pop", "pop3", "webdisk", "ftp", "ns1", "ns2", "relay"}
+
+    first_part = hostname.split('.')[0].lower()
+    is_admin = (
+        first_part not in UTILITY_EXCLUSIONS and (
+            any(kw in hn_lower for kw in ADMIN_KEYWORDS) or
+            ("cpanel" in hn_lower and port_results.get((2083, "cPanel-HTTPS", "high"))) or
+            ("whm" in hn_lower and port_results.get((2087, "WHM-HTTPS", "critical"))) or
+            ("webmin" in hn_lower and port_results.get((10000, "Webmin", "critical")))
+        )
+    )
     http_status = http_result.get("status")
     tech_stack = http_result.get("tech_stack", [])
     grade = http_result.get("sec_headers_grade", "unknown")
@@ -277,10 +306,14 @@ async def _scan_domain_inner(
                 ))
 
         # ── Auto-generate findings ───────────────────────────────────────────
+        all_open: list[tuple[int, str, str]] = [
+            (port, svc, risk) for (port, svc, risk), is_open in port_results.items() if is_open
+        ]
         try:
             await _generate_findings(
                 tenant_id, hostname, http_result, cert_info, risky_open,
-                sensitive_findings, email_security, is_admin, cve_data, nuclei_data, criticality, session
+                sensitive_findings, email_security, is_admin, cve_data, nuclei_data, criticality, session,
+                all_open_ports=all_open, geoip_info=geoip_info
             )
         except Exception as e:
             logger.warning(f"[EASM] Finding generation error for {hostname}: {e}")
@@ -395,6 +428,14 @@ async def _run_easm_scan_inner(tenant_id: str, scope_values: list[str], passed_j
         subdomain_map[root] = hosts
         all_domains.extend(hosts)
         logger.info(f"[EASM] {root}: {len(subs)} subdomains discovered → {len(hosts)} total hosts")
+
+        # Auto-generate informational attack surface discovery finding for root domain
+        try:
+            async with get_tenant_db(tenant_id) as session:
+                await _generate_subdomain_info_finding(tid, root, hosts, session)
+                await session.commit()
+        except Exception as sfe:
+            logger.warning(f"[EASM] Could not generate subdomain info finding for {root}: {sfe}")
 
     seen: set[str] = set()
     domains: list[str] = []

@@ -104,7 +104,7 @@ async def test_tenant_data(db_session: AsyncSession):
         role=user.role
     )
 
-    return {
+    data = {
         "tenant": tenant,
         "user": user,
         "tenant_id": tenant.id,
@@ -113,3 +113,21 @@ async def test_tenant_data(db_session: AsyncSession):
         "domain": domain,
         "headers": {"Authorization": f"Bearer {token}"}
     }
+
+    try:
+        yield data
+    finally:
+        try:
+            tid_str = str(tenant.id)
+            await db_session.execute(text("SET LOCAL app.current_tenant_id = 'bypass'"))
+            await db_session.execute(text(f"DELETE FROM findings WHERE tenant_id = '{tid_str}'"))
+            await db_session.execute(text(f"DELETE FROM scan_scopes WHERE tenant_id = '{tid_str}'"))
+            await db_session.execute(text(f"DELETE FROM scan_jobs WHERE tenant_id = '{tid_str}'"))
+            await db_session.execute(text(f"DELETE FROM easm_ports WHERE tenant_id = '{tid_str}'"))
+            await db_session.execute(text(f"DELETE FROM easm_certificates WHERE tenant_id = '{tid_str}'"))
+            await db_session.execute(text(f"DELETE FROM easm_assets WHERE tenant_id = '{tid_str}'"))
+            await db_session.execute(text(f"DELETE FROM users WHERE tenant_id = '{tid_str}'"))
+            await db_session.execute(text(f"DELETE FROM tenants WHERE id = '{tid_str}'"))
+            await db_session.commit()
+        except Exception:
+            await db_session.rollback()

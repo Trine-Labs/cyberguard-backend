@@ -305,12 +305,17 @@ def _detect_tech_stack(url: str, headers: dict, html: str) -> list[dict]:
 
 
 async def _calculate_cve_data(tech_stack: list[dict]) -> list[dict]:
-    """Fetch actual CVE data from CveLookupService."""
+    """Fetch actual high-impact CVE data from CveLookupService for exact versions."""
     cve_service = CveLookupService()
     all_cves = []
     for tech in tech_stack:
-        cves = await cve_service.get_cves_for_tech(tech["name"], tech.get("version", ""))
-        all_cves.extend(cves)
+        name = tech.get("name", "")
+        version = tech.get("version", "")
+        if name and version:
+            cves = await cve_service.get_cves_for_tech(name, version)
+            for c in cves:
+                c["tech_name"] = f"{name} {version}".strip()
+            all_cves.extend(cves)
     await cve_service.close()
     return all_cves
 
@@ -739,7 +744,7 @@ async def _probe_sensitive_paths(base_url: str, is_catch_all: bool = False) -> l
 
 async def _probe_http(hostname: str) -> dict:
     """
-    Probe HTTP/HTTPS on a hostname.
+    Probe HTTP/HTTPS on a hostname, including administrative ports if matching prefixes.
     Returns: {status, tech_stack, sec_headers_grade, sec_headers_score, missing_headers, redirect_url, is_catch_all}
     """
     result = {
@@ -751,7 +756,17 @@ async def _probe_http(hostname: str) -> dict:
         "is_catch_all": False,
         "final_url": None,
     }
+    hn_lower = hostname.lower()
     targets = [f"https://{hostname}", f"http://{hostname}"]
+    if "cpanel" in hn_lower:
+        targets.extend([f"https://{hostname}:2083", f"http://{hostname}:2082"])
+    elif "whm" in hn_lower:
+        targets.extend([f"https://{hostname}:2087", f"http://{hostname}:2086"])
+    elif "webmail" in hn_lower:
+        targets.extend([f"https://{hostname}:2096", f"http://{hostname}:2095"])
+    elif "webmin" in hn_lower:
+        targets.extend([f"https://{hostname}:10000", f"http://{hostname}:10000"])
+
     for url in targets:
         try:
             resp = await _HTTP_CLIENT.get(url)
@@ -774,82 +789,94 @@ async def _probe_http(hostname: str) -> dict:
 
 async def _probe_tls(hostname: str) -> Optional[dict]:
     """
-    Grab TLS certificate details for a hostname on port 443.
+    Grab TLS certificate details for a hostname on port 443 (or admin TLS ports 2083, 2087, 2096 if 443 fails).
     Returns None if no TLS or connection fails.
     """
-    try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(hostname, 443, ssl=ctx, server_hostname=hostname),
-            timeout=8.0,
-        )
-        cert_bin = writer.get_extra_info("ssl_object").getpeercert(binary_form=True)
-        writer.close()
-        await writer.wait_closed()
+    ports_to_try = [443]
+    hn_lower = hostname.lower()
+    if "cpanel" in hn_lower:
+        ports_to_try.append(2083)
+    elif "whm" in hn_lower:
+        ports_to_try.append(2087)
+    elif "webmail" in hn_lower:
+        ports_to_try.append(2096)
 
-        if not cert_bin:
-            return None
-
-        cert = x509.load_der_x509_certificate(cert_bin)
-
-        now = datetime.now(timezone.utc)
-        valid_from = cert.not_valid_before_utc
-        valid_to = cert.not_valid_after_utc
-        days_to_expiry = (valid_to - now).days
-        is_expired = days_to_expiry < 0
-
-        # Extract issuer
-        issuer_attrs = cert.issuer.get_attributes_for_oid(x509.NameOID.COMMON_NAME)
-        if not issuer_attrs:
-            issuer_attrs = cert.issuer.get_attributes_for_oid(x509.NameOID.ORGANIZATION_NAME)
-        issuer = issuer_attrs[0].value if issuer_attrs else "Unknown"
-
-        # Subject
-        subject_attrs = cert.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)
-        subject_name = subject_attrs[0].value if subject_attrs else hostname
-
-        # SANs
+    for port_num in ports_to_try:
         try:
-            ext = cert.extensions.get_extension_for_oid(x509.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
-            sans = ext.value.get_values_for_type(x509.DNSName)
-        except x509.ExtensionNotFound:
-            sans = []
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(hostname, port_num, ssl=ctx, server_hostname=hostname),
+                timeout=8.0,
+            )
+            cert_bin = writer.get_extra_info("ssl_object").getpeercert(binary_form=True)
+            writer.close()
+            await writer.wait_closed()
 
-        is_self_signed = cert.issuer == cert.subject
+            if not cert_bin:
+                continue
 
-        # Hostname matching check
-        def match_domain(target: str, pattern: str) -> bool:
-            if not pattern:
-                return False
-            if pattern.startswith("*."):
-                base = pattern[2:]
-                parts = target.split('.')
-                return len(parts) > 0 and '.'.join(parts[1:]).lower() == base.lower()
-            return target.lower() == pattern.lower()
+            cert = x509.load_der_x509_certificate(cert_bin)
 
-        is_mismatch = True
-        if match_domain(hostname, subject_name):
-            is_mismatch = False
-        for san in sans:
-            if match_domain(hostname, san):
+            now = datetime.now(timezone.utc)
+            valid_from = cert.not_valid_before_utc
+            valid_to = cert.not_valid_after_utc
+            days_to_expiry = (valid_to - now).days
+            is_expired = days_to_expiry < 0
+
+            # Extract issuer
+            issuer_attrs = cert.issuer.get_attributes_for_oid(x509.NameOID.COMMON_NAME)
+            if not issuer_attrs:
+                issuer_attrs = cert.issuer.get_attributes_for_oid(x509.NameOID.ORGANIZATION_NAME)
+            issuer = issuer_attrs[0].value if issuer_attrs else "Unknown"
+
+            # Subject
+            subject_attrs = cert.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)
+            subject_name = subject_attrs[0].value if subject_attrs else hostname
+
+            # SANs
+            try:
+                ext = cert.extensions.get_extension_for_oid(x509.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+                sans = ext.value.get_values_for_type(x509.DNSName)
+            except x509.ExtensionNotFound:
+                sans = []
+
+            is_self_signed = cert.issuer == cert.subject
+
+            # Hostname matching check
+            def match_domain(target: str, pattern: str) -> bool:
+                if not pattern:
+                    return False
+                if pattern.startswith("*."):
+                    base = pattern[2:]
+                    parts = target.split('.')
+                    return len(parts) > 0 and '.'.join(parts[1:]).lower() == base.lower()
+                return target.lower() == pattern.lower()
+
+            is_mismatch = True
+            if match_domain(hostname, subject_name):
                 is_mismatch = False
+            for san in sans:
+                if match_domain(hostname, san):
+                    is_mismatch = False
 
-        return {
-            "issuer": issuer,
-            "subject": subject_name,
-            "valid_from": valid_from,
-            "valid_to": valid_to,
-            "is_expired": is_expired,
-            "is_self_signed": is_self_signed,
-            "is_mismatch": is_mismatch,
-            "days_to_expiry": days_to_expiry,
-            "sans": sans,
-        }
-    except Exception as e:
-        logger.debug(f"TLS probe {hostname}: {e}")
-        return None
+            return {
+                "issuer": issuer,
+                "subject": subject_name,
+                "valid_from": valid_from,
+                "valid_to": valid_to,
+                "is_expired": is_expired,
+                "is_self_signed": is_self_signed,
+                "is_mismatch": is_mismatch,
+                "days_to_expiry": days_to_expiry,
+                "sans": sans,
+            }
+        except Exception as e:
+            logger.debug(f"TLS probe {hostname}:{port_num}: {e}")
+            continue
+
+    return None
 
 
 async def _scan_port(host: str, port: int, timeout: float = 2.5) -> bool:

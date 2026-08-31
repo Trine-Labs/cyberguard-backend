@@ -49,6 +49,7 @@ class StatusUpdateRequest(BaseModel):
 class AIAnalystRequest(BaseModel):
     industry_context: Optional[str] = "Moroccan Banking Sector"
     top_n: Optional[int] = 20
+    language: Optional[str] = "en"
 
 
 @router.get("")
@@ -118,16 +119,20 @@ async def list_findings(
     )
     open_count = sum(sev_map.values())
     
+    total_pages = max(1, -(-total // per_page))
     ret = {
         "findings": [_finding_to_dict(f) for f in findings],
         "total": total,
         "page": page,
         "per_page": per_page,
-        "pages": max(1, -(-total // per_page)),
+        "pages": total_pages,
+        "has_more": page < total_pages,
         "summary": {
             "critical": sev_map.get("critical", 0),
             "high": sev_map.get("high", 0),
             "medium": sev_map.get("medium", 0),
+            "low": sev_map.get("low", 0),
+            "info": sev_map.get("info", 0),
             "open": open_count,
         },
     }
@@ -136,32 +141,97 @@ async def list_findings(
 
 @router.get("/ai-analyst/latest")
 async def get_latest_ai_analyst_synthesis(
+    lang: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
 ):
-    """Retrieve saved executive AI synthesis for the current tenant if available."""
-    from app.services.ai_analyst import get_latest_executive_synthesis
-    latest = get_latest_executive_synthesis(str(current_user.tenant_id))
-    if not latest:
+    """
+    Retrieve saved executive AI synthesis for the current tenant from PostgreSQL DB.
+    If 'lang' is specified and does not match the cached synthesis language, automatically
+    triggers a fresh re-synthesis in that language and caches it.
+    """
+    from app.services.ai_analyst import (
+        get_latest_executive_synthesis_db,
+        run_ai_analyst_pipeline,
+        save_executive_synthesis_db,
+    )
+    from app.models.tenant import Tenant
+
+    await set_rls_tenant(session, str(current_user.tenant_id))
+
+    latest = await get_latest_executive_synthesis_db(session, str(current_user.tenant_id), language=lang)
+    if latest:
+        return {"synthesis": latest}
+
+    # Check if a synthesis exists in another language that needs re-translating
+    raw_latest = await get_latest_executive_synthesis_db(session, str(current_user.tenant_id))
+    if not raw_latest and not lang:
         return {"synthesis": None}
-    return {"synthesis": latest}
+
+    target_lang = lang or "en"
+    if raw_latest and raw_latest.get("language") != target_lang:
+        t_res = await session.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
+        tenant = t_res.scalar_one_or_none()
+        company_info = tenant.company_info if (tenant and tenant.company_info) else ""
+        org_name = tenant.org_name if tenant else "Enterprise Business"
+        industry_ctx = f"{org_name} Profile Context" if company_info else f"{org_name} Security Baseline"
+
+        q = (
+            select(Finding)
+            .where(and_(Finding.tenant_id == current_user.tenant_id, Finding.status == "open"))
+            .order_by(Finding.severity, Finding.created_at.desc())
+            .limit(20)
+        )
+        result = await session.execute(q)
+        findings_orm = result.scalars().all()
+        findings_data = [_finding_to_dict(f) for f in findings_orm]
+
+        try:
+            new_synthesis = await run_ai_analyst_pipeline(
+                findings=findings_data,
+                industry_context=industry_ctx,
+                company_info=company_info,
+                org_name=org_name,
+                language=target_lang,
+            )
+            await save_executive_synthesis_db(session, str(current_user.tenant_id), new_synthesis)
+            return {"synthesis": new_synthesis}
+        except Exception as e:
+            logger.warning(f"[AI Analyst] Auto-regeneration on language mismatch failed: {e}")
+            return {"synthesis": raw_latest}
+
+    return {"synthesis": raw_latest}
 
 
 @router.post("/ai-analyst/synthesize")
 async def synthesize_ai_analyst(
     body: Optional[AIAnalystRequest] = None,
+    force: bool = Query(False),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ):
     """
     Module 5: AI Analyst Layer
     Takes deterministic Findings for the tenant, strips PII, embeds tenant profile background info (data training context),
-    and generates an executive-ready English synthesis with strict DB finding ID validation.
-    Persists synthesis for the tenant.
+    and generates an executive-ready synthesis in the requested language.
+    Persists synthesis for the tenant permanently in PostgreSQL.
     """
-    from app.services.ai_analyst import run_ai_analyst_pipeline, save_executive_synthesis
+    from app.services.ai_analyst import (
+        run_ai_analyst_pipeline,
+        save_executive_synthesis_db,
+        get_latest_executive_synthesis_db,
+    )
     from app.models.tenant import Tenant
 
     await set_rls_tenant(session, str(current_user.tenant_id))
+
+    target_lang = (body.language if (body and body.language) else "en").lower()
+
+    # If force is not requested, return existing saved synthesis from DB if language matches
+    if not force:
+        existing = await get_latest_executive_synthesis_db(session, str(current_user.tenant_id), language=target_lang)
+        if existing and existing.get("language") == target_lang:
+            return existing
 
     # Fetch Tenant profile info
     t_res = await session.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
@@ -190,8 +260,9 @@ async def synthesize_ai_analyst(
             industry_context=industry_ctx,
             company_info=company_info,
             org_name=org_name,
+            language=target_lang,
         )
-        save_executive_synthesis(str(current_user.tenant_id), synthesis)
+        await save_executive_synthesis_db(session, str(current_user.tenant_id), synthesis)
         return synthesis
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Analyst execution failed: {str(e)}")
@@ -201,13 +272,15 @@ async def synthesize_ai_analyst(
 async def synthesize_single_finding(
     finding_id: str,
     force: bool = Query(False),
+    lang: str = Query("en"),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ):
     """
     Generate dynamic context-aware AI synthesis for a single security finding
     and save the result directly into finding.evidence['ai_synthesis'] in PostgreSQL.
-    If an AI synthesis already exists and force=False, returns the cached database record instantly.
+    If an AI synthesis already exists in the same language and force=False, returns the cached database record instantly.
+    If the language has changed, re-generates in the requested language.
     """
     from app.services.ai_analyst import run_single_finding_ai_synthesis
     from sqlalchemy.orm.attributes import flag_modified
@@ -230,15 +303,17 @@ async def synthesize_single_finding(
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
 
-    # ── Return cached DB synthesis if already generated and force=False ──────────
+    # ── Return cached DB synthesis if already generated with matching language and force=False ──
     existing_synthesis = finding.evidence.get("ai_synthesis") if (finding.evidence and isinstance(finding.evidence, dict)) else None
     if not force and existing_synthesis:
-        return {
-            "message": "AI synthesis retrieved from database cache",
-            "finding_id": str(finding.id),
-            "ai_synthesis": existing_synthesis,
-            "finding": _finding_to_dict(finding),
-        }
+        cached_lang = existing_synthesis.get("language", "en")
+        if cached_lang == lang:
+            return {
+                "message": "AI synthesis retrieved from database cache",
+                "finding_id": str(finding.id),
+                "ai_synthesis": existing_synthesis,
+                "finding": _finding_to_dict(finding),
+            }
 
     from app.models.tenant import Tenant
     t_res = await session.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
@@ -249,17 +324,33 @@ async def synthesize_single_finding(
     synthesis_result = await run_single_finding_ai_synthesis(
         finding=finding_dict,
         industry_context="Enterprise Security Baseline",
-        company_info=company_info or ""
+        company_info=company_info or "",
+        language=lang,
     )
 
+    from sqlalchemy import update
     new_evidence = dict(finding.evidence or {})
     new_evidence["ai_synthesis"] = synthesis_result
-    finding.evidence = new_evidence
-    flag_modified(finding, "evidence")
-    finding.updated_at = datetime.now(timezone.utc)
 
+    await session.execute(
+        update(Finding)
+        .where(
+            and_(
+                Finding.tenant_id == current_user.tenant_id,
+                Finding.id == finding.id,
+            )
+        )
+        .values(
+            evidence=new_evidence,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
     await session.commit()
-    await session.refresh(finding)
+
+    refreshed_res = await session.execute(
+        select(Finding).where(Finding.id == finding.id)
+    )
+    fresh_finding = refreshed_res.scalar_one()
 
     try:
         await FastAPICache.clear()
@@ -268,9 +359,9 @@ async def synthesize_single_finding(
 
     return {
         "message": "AI synthesis generated and saved",
-        "finding_id": str(finding.id),
+        "finding_id": str(fresh_finding.id),
         "ai_synthesis": synthesis_result,
-        "finding": _finding_to_dict(finding),
+        "finding": _finding_to_dict(fresh_finding),
     }
 
 

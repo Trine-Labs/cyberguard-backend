@@ -28,36 +28,22 @@ async def get_db():
             raise
 
 
-@dataclass
-class TokenUser:
-    """
-    Lightweight user context built directly from the JWT — zero DB roundtrips.
-    Contains everything routers need for RLS + authorization decisions.
-    Full DB row is only fetched when explicitly required via get_current_user_full.
-    """
-    id: uuid.UUID
-    tenant_id: uuid.UUID
-    role: str
-    # Stub attributes so TokenUser is a drop-in for User in most routers
-    is_active: bool = True
-    is_totp_verified: bool = True
-    email: str = ""
+# TokenUser alias for backward compatibility across routers
+TokenUser = User
 
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-) -> TokenUser:
+    session: AsyncSession = Depends(get_db),
+) -> User:
     """
-    Fast auth guard: validates JWT signature + expiry, then returns a
-    TokenUser built entirely from the token claims — NO database roundtrip.
-
-    The JWT is cryptographically signed so the user_id and tenant_id in it
-    are trustworthy. RLS is set immediately so subsequent queries in the
-    same session are automatically tenant-scoped.
+    Auth guard: validates JWT token signature, then verifies that the user
+    account and their organization tenant exist and are active in the database.
+    If the account or organization has been deleted or suspended, raises 401.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Authentication credentials are invalid or expired.",
+        detail="Authentication credentials are invalid, expired, or account no longer exists.",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
@@ -65,21 +51,35 @@ async def get_current_user(
         payload = decode_token(credentials.credentials)
         user_id: str = payload.get("sub")
         tenant_id: str = payload.get("tenant_id")
-        role: str = payload.get("role", "analyst")
         if not user_id or not tenant_id:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
 
-    # Note: RLS context is no longer set here to prevent cache hits from exhausting DB connections.
-    # Route handlers or other dependencies must call await set_rls_tenant(session, current_user.tenant_id)
-    # when they actually need to interact with the database.
-
-    return TokenUser(
-        id=uuid.UUID(user_id),
-        tenant_id=uuid.UUID(tenant_id),
-        role=role,
+    # 1. Fetch user from DB and check active status
+    user_res = await session.execute(
+        select(User).where(User.id == uuid.UUID(user_id))
     )
+    user = user_res.scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise credentials_exception
+
+    # 2. Fetch tenant and verify it still exists and is not suspended
+    tenant_res = await session.execute(
+        select(Tenant).where(Tenant.id == uuid.UUID(tenant_id))
+    )
+    tenant = tenant_res.scalar_one_or_none()
+    if tenant is None or tenant.status == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Your organization account has been removed or suspended.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Set RLS for this tenant
+    await set_rls_tenant(session, str(tenant.id))
+
+    return user
 
 
 async def get_current_user_full(

@@ -14,6 +14,53 @@ from app.models.scope import ScanScope
 from app.services.easm.config import _is_ip, logger
 
 
+async def _generate_subdomain_info_finding(
+    tenant_id: uuid.UUID,
+    root_domain: str,
+    subdomains: list[str],
+    session: AsyncSession,
+) -> None:
+    """Auto-generate attack surface inventory info finding for enumerated subdomains."""
+    sub_count = len(subdomains)
+    issue_type = f"Discovered Subdomains ({sub_count} Active Hosts)"
+
+    existing = await session.execute(
+        select(Finding).where(
+            and_(
+                Finding.tenant_id == tenant_id,
+                Finding.entity == root_domain,
+                Finding.issue_type == issue_type,
+            )
+        )
+    )
+    existing_row = existing.scalars().first()
+    evidence_payload = {
+        "root_domain": root_domain,
+        "subdomains_count": sub_count,
+        "subdomains_sample": subdomains[:50],
+        "description": f"External perimeter reconnaissance mapped {sub_count} active subdomain hostname(s) associated with {root_domain}.",
+    }
+
+    if existing_row:
+        existing_row.last_seen_at = datetime.now(timezone.utc)
+        existing_row.evidence = evidence_payload
+        flag_modified(existing_row, "evidence")
+    else:
+        seq_result = await session.execute(text("SELECT nextval('findings_seq')"))
+        seq_num = seq_result.scalar()
+        session.add(Finding(
+            tenant_id=tenant_id,
+            finding_num=seq_num,
+            severity="info",
+            source="ext_scanner",
+            issue_type=issue_type,
+            entity=root_domain,
+            tags=["Info", "Attack Surface", "Subdomains", "DNS"],
+            evidence=evidence_payload,
+            status="open",
+        ))
+
+
 async def _generate_findings(
     tenant_id: uuid.UUID,
     hostname: str,
@@ -27,9 +74,11 @@ async def _generate_findings(
     nuclei_data: list[dict],
     asset_criticality: str,
     session: AsyncSession,
+    all_open_ports: Optional[list[tuple[int, str, str]]] = None,
+    geoip_info: Optional[dict] = None,
 ) -> None:
     """
-    Auto-generate findings for security issues found during EASM scan.
+    Auto-generate findings for security issues & informational telemetry found during EASM scan.
     Deduplicates by entity+issue_type before inserting.
     Adjusts severity based on asset criticality and includes real CVEs.
     """
@@ -94,8 +143,64 @@ async def _generate_findings(
             },
         })
 
+    # Consolidated High-Impact Version-Specific CVE Findings
+    # Group by detected component name + version (e.g. "Apache 2.4.49")
+    if cve_data:
+        tech_cve_groups: dict[str, list[dict]] = {}
+        for cve in cve_data:
+            cve_sev = (cve.get("severity") or "high").lower()
+            if cve_sev not in ("high", "critical") and float(cve.get("cvss_score", 0)) < 7.0:
+                continue
+
+            tech_label = cve.get("tech_name")
+            if not tech_label:
+                continue
+
+            if tech_label not in tech_cve_groups:
+                tech_cve_groups[tech_label] = []
+            tech_cve_groups[tech_label].append(cve)
+
+        for tech_name, cves in tech_cve_groups.items():
+            if not cves:
+                continue
+
+            max_score = max([float(c.get("cvss_score", 7.0)) for c in cves])
+            base_severity = "critical" if max_score >= 9.0 else "high"
+
+            cve_list_summary = []
+            cve_ids = []
+            for c in cves[:5]:  # Top 5 high-severity CVEs
+                cid = c.get("cve_id", "Unknown CVE")
+                cve_ids.append(cid)
+                cve_list_summary.append({
+                    "cve_id": cid,
+                    "cvss_score": c.get("cvss_score", 7.5),
+                    "severity": c.get("severity", "high"),
+                    "description": c.get("description", "")
+                })
+
+            cve_str = ", ".join(cve_ids[:3])
+            issue_title = f"Outdated Component: {tech_name} ({len(cves)} Vulnerabilities: {cve_str})"
+
+            findings_to_create.append({
+                "severity": _adjust_severity(base_severity),
+                "source": "ext_scanner",
+                "issue_type": issue_title,
+                "entity": hostname,
+                "tags": ["CVE", "Outdated Software", tech_name.split()[0]],
+                "evidence": {
+                    "hostname": hostname,
+                    "component": tech_name,
+                    "vulnerability_count": len(cves),
+                    "top_cvss_score": max_score,
+                    "cves": cve_list_summary,
+                    "description": f"Identified outdated {tech_name} installation exposing {len(cves)} known high/critical vulnerabilities ({cve_str}).",
+                    "remediation": f"Upgrade {tech_name} to the latest supported stable vendor release."
+                }
+            })
+
     # Host Unreachable / Dead DNS Guardrail
-    if not http_result.get("status") and not cert_info and not open_risky_ports and not sensitive_paths:
+    if not http_result.get("status") and not cert_info and not open_risky_ports and not sensitive_paths and not cve_data and not is_exposed_admin:
         logger.info(f"[EASM] Skipping findings generation for unreachable host: {hostname}")
         return
 
@@ -248,7 +353,12 @@ async def _generate_findings(
         })
 
     # Exposed admin panel
-    if is_exposed_admin:
+    ADMIN_KEYWORDS = ["admin", "portal", "manage", "cpanel", "whm", "webmin", "wp-admin", "phpmyadmin", "kibana", "grafana", "dashboard"]
+    UTILITY_EXCLUSIONS = {"autodiscover", "autoconfig", "mail", "email", "smtp", "imap", "pop", "pop3", "webdisk", "ftp", "ns1", "ns2", "relay"}
+
+    first_part = hostname.split('.')[0].lower()
+    if is_exposed_admin and first_part not in UTILITY_EXCLUSIONS:
+        matched_kw = [kw for kw in ADMIN_KEYWORDS if kw in hostname.lower()]
         findings_to_create.append({
             "severity": _adjust_severity("high"),
             "source": "ext_scanner",
@@ -256,9 +366,9 @@ async def _generate_findings(
             "entity": hostname,
             "evidence": {
                 "hostname": hostname,
-                "matched_keyword": any(kw in hostname for kw in ["admin", "portal", "manage", "cpanel", "wp-admin", "phpmyadmin"]),
+                "matched_keyword": matched_kw[0] if matched_kw else "Admin Interface",
                 "internet_facing": True,
-                "note": "Admin-named hostname is publicly reachable on the internet.",
+                "note": f"Administrative control panel or portal ({matched_kw[0] if matched_kw else 'Admin'}) is publicly reachable on the internet.",
             },
         })
 
@@ -302,6 +412,104 @@ async def _generate_findings(
                     "description": "No SPF record was found, allowing unauthorized senders to forge emails from this domain.",
                 },
             })
+
+        # ── Informational Telemetry: Email Security Baseline (Enforced) ───
+        if email_security.get("dmarc") and email_security.get("dmarc_policy") in ("reject", "quarantine") and email_security.get("spf"):
+            pol_cap = str(email_security.get("dmarc_policy", "enforced")).capitalize()
+            findings_to_create.append({
+                "severity": "info",
+                "source": "ext_scanner",
+                "issue_type": f"Email Security: SPF & DMARC Enforced ({pol_cap})",
+                "entity": base_domain,
+                "tags": ["Info", "Email Security", "DMARC", "SPF"],
+                "evidence": {
+                    "domain": base_domain,
+                    "dmarc_policy": email_security.get("dmarc_policy"),
+                    "dmarc_record": email_security.get("dmarc"),
+                    "spf_record": email_security.get("spf"),
+                    "description": f"Domain {base_domain} enforces email spoofing protections via active SPF and DMARC ({email_security.get('dmarc_policy')}) records.",
+                },
+            })
+
+    # ── Informational Telemetry: Active SSL/TLS Certificate Baseline ─────────
+    if cert_info and not cert_info.get("is_expired") and not cert_info.get("is_self_signed") and not cert_info.get("is_mismatch") and cert_info.get("issuer") != "Missing" and cert_info.get("days_to_expiry", 0) > 30:
+        valid_to_val = cert_info.get("valid_to")
+        valid_to_str = valid_to_val.isoformat() if hasattr(valid_to_val, "isoformat") else str(valid_to_val)
+        ca_name = cert_info.get("issuer", "Trusted CA")
+        findings_to_create.append({
+            "severity": "info",
+            "source": "ext_scanner",
+            "issue_type": f"Active SSL Certificate ({ca_name})",
+            "entity": hostname,
+            "tags": ["Info", "TLS", "Certificate"],
+            "evidence": {
+                "hostname": hostname,
+                "issuer": cert_info.get("issuer"),
+                "valid_to": valid_to_str,
+                "days_remaining": cert_info.get("days_to_expiry"),
+                "sans_count": len(cert_info.get("sans", [])),
+                "sans": cert_info.get("sans", [])[:10],
+                "description": f"Verified active SSL/TLS certificate issued by {cert_info.get('issuer')} covering {hostname} with {cert_info.get('days_to_expiry')} days remaining.",
+            },
+        })
+
+    # ── Informational Telemetry: Web Technology Stack Fingerprint ────────────
+    if http_result.get("tech_stack"):
+        tech_list = http_result.get("tech_stack", [])
+        tech_names = [t.get("name") for t in tech_list if t.get("name")]
+        if tech_names:
+            tech_summary_str = ", ".join(tech_names[:5])
+            findings_to_create.append({
+                "severity": "info",
+                "source": "ext_scanner",
+                "issue_type": f"Web Tech Stack: {tech_summary_str}",
+                "entity": hostname,
+                "tags": ["Info", "Technology Stack", "Fingerprint"],
+                "evidence": {
+                    "hostname": hostname,
+                    "tech_count": len(tech_list),
+                    "technologies": tech_list,
+                    "tech_summary": tech_summary_str,
+                    "description": f"Fingerprinted {len(tech_list)} web application technologies on {hostname}: {tech_summary_str}.",
+                },
+            })
+
+    # ── Informational Telemetry: Perimeter Port Exposure Baseline ────────────
+    if all_open_ports:
+        port_summary = ", ".join([f"{s} ({p})" for p, s, _ in all_open_ports[:6]])
+        port_count_label = f"{len(all_open_ports)} Active Services" if len(all_open_ports) > 1 else "1 Active Service"
+        findings_to_create.append({
+            "severity": "info",
+            "source": "ext_scanner",
+            "issue_type": f"Open Network Ports: {port_count_label}",
+            "entity": hostname,
+            "tags": ["Info", "Port Discovery", "Perimeter Baseline"],
+            "evidence": {
+                "hostname": hostname,
+                "open_ports_count": len(all_open_ports),
+                "ports": [{"port": p, "service": s, "risk_level": r} for p, s, r in all_open_ports],
+                "ports_summary": port_summary,
+                "description": f"Detected {len(all_open_ports)} active network service port(s) on {hostname}: {port_summary}.",
+            },
+        })
+
+    # ── Informational Telemetry: Infrastructure & Hosting Routing ────────────
+    if geoip_info and (geoip_info.get("provider") or geoip_info.get("location")):
+        prov = geoip_info.get("provider") or "Cloud Infrastructure"
+        loc = geoip_info.get("location") or "Global"
+        findings_to_create.append({
+            "severity": "info",
+            "source": "ext_scanner",
+            "issue_type": f"Hosting Provider: {prov} ({loc})",
+            "entity": hostname,
+            "tags": ["Info", "Infrastructure", "GeoIP"],
+            "evidence": {
+                "hostname": hostname,
+                "provider": prov,
+                "location": loc,
+                "description": f"Host {hostname} is hosted on infrastructure managed by {prov} in region {loc}.",
+            },
+        })
 
     unique_findings_map = {}
     for f in findings_to_create:

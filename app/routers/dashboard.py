@@ -261,15 +261,64 @@ async def get_dashboard_overview(
         if a.discovered_at and (a.discovered_at if a.discovered_at.tzinfo else a.discovered_at.replace(tzinfo=timezone.utc)) >= since_24h
     )
 
-    # 5. Privileged / M365 identity risks
-    privileged_risks = sum(
-        1 for f in open_findings
-        if f.source == "m365" and f.severity in ("critical", "high")
-    )
-
-    # 6. Security Posture Score — penalty-based from open actionable findings only
+    # 6. Security Posture Score & Dynamic 12-Point Trend / Delta Calculation
     penalty = (crit_count * 15) + (high_count * 8) + (med_count * 3) + (low_count * 1)
-    posture_score = max(10, 100 - penalty)
+    posture_score = max(10, min(100, 100 - penalty))
+
+    # Query all actionable findings (both open and resolved) to compute true historical trend
+    all_findings_query = await db.execute(
+        select(Finding).where(
+            and_(
+                Finding.tenant_id == tenant_id,
+                Finding.severity.in_(ACTIONABLE_SEVERITIES)
+            )
+        )
+    )
+    all_tenant_findings = all_findings_query.scalars().all()
+
+    now_utc = datetime.now(timezone.utc)
+    sparkline_points = []
+    
+    # Calculate posture score across 12 chronological time slices (past 12 days / scan intervals)
+    for day_idx in range(11, -1, -1):
+        target_time = now_utc - timedelta(days=day_idx)
+        # Findings that were discovered on/before target_time and not resolved on/before target_time
+        active_at_target = [
+            f for f in all_tenant_findings
+            if (f.first_seen_at.replace(tzinfo=timezone.utc) if f.first_seen_at.tzinfo is None else f.first_seen_at) <= target_time
+            and (
+                f.resolved_at is None
+                or (f.resolved_at.replace(tzinfo=timezone.utc) if f.resolved_at.tzinfo is None else f.resolved_at) > target_time
+            )
+            and f.status != "false_positive"
+        ]
+        p_crit = sum(1 for f in active_at_target if f.severity == "critical")
+        p_high = sum(1 for f in active_at_target if f.severity == "high")
+        p_med = sum(1 for f in active_at_target if f.severity == "medium")
+        p_low = sum(1 for f in active_at_target if f.severity == "low")
+        day_penalty = (p_crit * 15) + (p_high * 8) + (p_med * 3) + (p_low * 1)
+        day_score = max(10, min(100, 100 - day_penalty))
+        sparkline_points.append(day_score)
+
+    # Calculate posture delta relative to previous period or resolution of findings
+    if len(sparkline_points) >= 2:
+        prev_score = sparkline_points[-2]
+    else:
+        prev_score = posture_score
+
+    # Check if any resolved findings recently improved the score
+    resolved_in_24h = [
+        f for f in resolved_findings
+        if f.resolved_at and (f.resolved_at.replace(tzinfo=timezone.utc) if f.resolved_at.tzinfo is None else f.resolved_at) >= since_24h
+    ]
+    if resolved_in_24h:
+        resolved_boost = sum((15 if f.severity == "critical" else 8 if f.severity == "high" else 3 if f.severity == "medium" else 1) for f in resolved_in_24h)
+        posture_delta = resolved_boost
+    else:
+        posture_delta = posture_score - prev_score
+
+    # Delta string formatted with sign
+    posture_delta_percent = f"+{posture_delta}%" if posture_delta > 0 else f"{posture_delta}%"
 
     if posture_score >= 80:
         posture_label = "Strong"
@@ -280,6 +329,52 @@ async def get_dashboard_overview(
     else:
         posture_label = "Critical Risk"
         threat_level = "Critical"
+
+    # 5. Privileged / M365 identity risks & dynamic tracked SSPM items
+    m365_open_findings = [f for f in open_findings if f.source == "m365"]
+    m365_total_risks = len(m365_open_findings)
+    privileged_risks = sum(
+        1 for f in m365_open_findings
+        if f.severity in ("critical", "high")
+    )
+
+    # Dynamic group by actual tracked issue types from SSPM
+    m365_counts_by_issue: dict[str, dict] = {}
+    for f in m365_open_findings:
+        title = f.issue_type or "M365 Security Misconfiguration"
+        if title not in m365_counts_by_issue:
+            m365_counts_by_issue[title] = {
+                "title": title,
+                "count": 0,
+                "severity": f.severity if f.severity in ("critical", "high", "medium", "low") else "medium",
+            }
+        m365_counts_by_issue[title]["count"] += 1
+        if f.severity == "critical":
+            m365_counts_by_issue[title]["severity"] = "critical"
+        elif f.severity == "high" and m365_counts_by_issue[title]["severity"] != "critical":
+            m365_counts_by_issue[title]["severity"] = "high"
+
+    sev_weight = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    sorted_m365_items = sorted(
+        m365_counts_by_issue.values(),
+        key=lambda x: (x["count"], sev_weight.get(x["severity"], 0)),
+        reverse=True,
+    )
+
+    baseline_sspm_controls = [
+        {"title": "Administrative MFA & Conditional Access", "count": 0, "severity": "low"},
+        {"title": "Legacy Authentication Protocol Policy", "count": 0, "severity": "low"},
+        {"title": "External Mailbox Forwarding & Sharing", "count": 0, "severity": "low"},
+        {"title": "Privileged Role Governance & Inactive Accounts", "count": 0, "severity": "low"},
+    ]
+
+    m365_tracked_items = sorted_m365_items[:4]
+    if len(m365_tracked_items) < 4:
+        for b in baseline_sspm_controls:
+            if len(m365_tracked_items) >= 4:
+                break
+            if not any(item["title"] == b["title"] for item in m365_tracked_items):
+                m365_tracked_items.append(b)
 
     # 7. DNSSI Alignment — computed from real asset security data
     dnssi_alignment = _compute_dnssi_alignment(assets, open_findings)
@@ -328,16 +423,29 @@ async def get_dashboard_overview(
 
     return {
         "posture_score": posture_score,
+        "posture_delta": posture_delta,
+        "posture_delta_percent": posture_delta_percent,
+        "posture_sparkline": sparkline_points,
         "posture_label": posture_label,
         "threat_level": threat_level,
         "dnssi_alignment": dnssi_alignment,
         "privileged_risks": privileged_risks,
+        "m365_risks": m365_total_risks,
+        "m365_hits": m365_total_risks,
+        "m365_items": m365_tracked_items,
         "attack_surface": {"exposed": exposed_assets, "total": total_assets if total_assets > 0 else 1},
         "active_threats": active_threats,
+        "total_findings": active_threats,
         "new_assets_24h": new_assets_24h,
         "mttr_days": mttr_days,
         "assets_online": total_assets,
         "signal_counts": {
+            "critical": crit_count,
+            "high": high_count,
+            "medium": med_count,
+            "low": low_count,
+        },
+        "severity_distribution": {
             "critical": crit_count,
             "high": high_count,
             "medium": med_count,

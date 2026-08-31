@@ -19,95 +19,312 @@ settings = get_settings()
 
 TEMPLATES: Dict[str, Dict[str, str]] = {
     "password_reset": {
-        "subject": "Urgent: Microsoft 365 Password Expiration Notice",
+        "subject": "Action Required: Microsoft 365 Password Expiration Alert",
         "sender_name": "Microsoft 365 Security Team",
         "body_html": """
-        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-            <h2 style="color: #d9534f;">Microsoft 365 Password Expiration Notice</h2>
-            <p>Hello <strong>{employee_name}</strong>,</p>
-            <p>Your Microsoft 365 organization password is scheduled to expire in <strong>4 hours</strong>.</p>
-            <p>To prevent immediate interruption to your Outlook, Teams, and cloud documents, please verify your credentials below:</p>
-            <div style="margin: 25px 0;">
-                <a href="{tracking_url}" style="background-color: #0078d4; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Keep Current Password & Verify Identity</a>
-            </div>
-            <p style="font-size: 12px; color: #777;">Reference Code: MS-SEC-{token_short}</p>
-            <p style="font-size: 11px; color: #999;">Microsoft Security Operations Center &copy; 2026</p>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+        <body style="margin: 0; padding: 24px; background-color: #f4f5f7; font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; margin: 0 auto; background-color: #ffffff; border-radius: 4px; border: 1px solid #e1dfdd; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+                <tr>
+                    <td style="padding: 32px 40px 24px 40px;">
+                        <!-- Microsoft Header -->
+                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 24px;">
+                            <tr>
+                                <td style="vertical-align: middle;">
+                                    <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                                        <tr>
+                                            <td style="width: 10px; height: 10px; background-color: #f25022;"></td>
+                                            <td style="width: 2px;"></td>
+                                            <td style="width: 10px; height: 10px; background-color: #7fba00;"></td>
+                                        </tr>
+                                        <tr><td colspan="3" style="height: 2px;"></td></tr>
+                                        <tr>
+                                            <td style="width: 10px; height: 10px; background-color: #00a4ef;"></td>
+                                            <td style="width: 2px;"></td>
+                                            <td style="width: 10px; height: 10px; background-color: #ffb900;"></td>
+                                        </tr>
+                                    </table>
+                                </td>
+                                <td style="vertical-align: middle; padding-left: 10px;">
+                                    <span style="font-size: 18px; font-weight: 600; color: #737373; letter-spacing: -0.3px;">Microsoft 365 Security</span>
+                                </td>
+                            </tr>
+                        </table>
+
+                        <h2 style="color: #1b1b1b; font-size: 20px; font-weight: 600; margin: 0 0 16px 0; line-height: 1.3;">
+                            Your organization password expires today
+                        </h2>
+                        
+                        <p style="color: #323130; font-size: 14px; line-height: 1.6; margin: 0 0 16px 0;">
+                            Hello <strong>{employee_name}</strong>,
+                        </p>
+                        <p style="color: #323130; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+                            Your Microsoft 365 organization account password will expire in <strong>4 hours</strong>. To maintain uninterrupted access to your Outlook inbox, Microsoft Teams, OneDrive files, and corporate cloud resources, please retain your current credentials below:
+                        </p>
+
+                        <!-- Call to Action -->
+                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 28px 0;">
+                            <tr>
+                                <td style="border-radius: 2px; background-color: #0067b8; text-align: center;">
+                                    <a href="{tracking_url}" style="background-color: #0067b8; border: 1px solid #0067b8; border-radius: 2px; color: #ffffff; display: inline-block; font-size: 14px; font-weight: 600; padding: 12px 28px; text-decoration: none; box-sizing: border-box;">
+                                        Keep Current Password &amp; Retain Access
+                                    </a>
+                                </td>
+                            </tr>
+                        </table>
+
+                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f8f9fa; border-radius: 4px; padding: 12px 16px; margin-top: 20px; border-left: 3px solid #0067b8;">
+                            <tr>
+                                <td style="font-size: 12px; color: #605e5c; line-height: 1.5;">
+                                    <strong>Tenant Security Notice:</strong> If no action is taken before expiration, your active session tokens will be revoked and multi-factor re-enrollment will be enforced.
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="background-color: #f3f2f1; padding: 20px 40px; border-top: 1px solid #edebe9; font-size: 11px; color: #605e5c; line-height: 1.5;">
+                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                            <tr>
+                                <td>
+                                    Reference Ticket: <strong>MS-SEC-{token_short}</strong><br>
+                                    Microsoft Security Operations Center &bull; Identity &amp; Access Governance
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+        </body>
+        </html>
         """
     },
     "urgent_invoice": {
-        "subject": "Action Required: Outstanding Vendor Invoice #INV-88942",
+        "subject": "Action Required: Outstanding Vendor Invoice #INV-88942 Authorization",
         "sender_name": "Accounts Payable Department",
         "body_html": """
-        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-            <h3 style="color: #222;">Pending Payment Notice: Invoice #INV-88942</h3>
-            <p>Dear <strong>{employee_name}</strong>,</p>
-            <p>Please review the attached invoice payment request for service period Q3. Late fees will incur if payment is not authorized today.</p>
-            <div style="margin: 25px 0;">
-                <a href="{tracking_url}" style="background-color: #2e7d32; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Review & Authorize Payment Voucher</a>
-            </div>
-            <p style="font-size: 12px; color: #777;">Secure Voucher ID: VOUCH-{token_short}</p>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+        <body style="margin: 0; padding: 24px; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; margin: 0 auto; background-color: #ffffff; border-radius: 6px; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+                <tr>
+                    <td style="padding: 32px 36px;">
+                        <div style="font-size: 18px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Accounts Payable Electronic Voucher System</div>
+                        <div style="font-size: 12px; color: #64748b; margin-bottom: 24px;">Urgent Payment Authorization Request &bull; Invoice #INV-88942</div>
+
+                        <p style="color: #334155; font-size: 14px; line-height: 1.6; margin: 0 0 16px 0;">
+                            Dear <strong>{employee_name}</strong>,
+                        </p>
+                        <p style="color: #334155; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+                            An electronic invoice voucher requires your immediate sign-off prior to the end-of-month accounting settlement cycle:
+                        </p>
+
+                        <!-- Invoice Summary Box -->
+                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 24px;">
+                            <tr>
+                                <td style="padding: 12px 16px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Vendor:</td>
+                                <td style="padding: 12px 16px; border-bottom: 1px solid #e2e8f0; font-size: 13px; font-weight: 600; color: #0f172a;">Global Enterprise Cloud Services</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 12px 16px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Amount Due:</td>
+                                <td style="padding: 12px 16px; border-bottom: 1px solid #e2e8f0; font-size: 13px; font-weight: 600; color: #0f172a;">$14,850.00 USD</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 12px 16px; font-size: 13px; color: #64748b;">Due Date:</td>
+                                <td style="padding: 12px 16px; font-size: 13px; font-weight: 600; color: #dc2626;">Immediate (Pending Approval)</td>
+                            </tr>
+                        </table>
+
+                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 24px 0;">
+                            <tr>
+                                <td style="border-radius: 6px; background-color: #0284c7; text-align: center;">
+                                    <a href="{tracking_url}" style="background-color: #0284c7; border: 1px solid #0284c7; border-radius: 6px; color: #ffffff; display: inline-block; font-size: 14px; font-weight: 600; padding: 12px 28px; text-decoration: none;">
+                                        Review &amp; Authorize Payment Voucher
+                                    </a>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="background-color: #f8fafc; padding: 16px 36px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #94a3b8;">
+                        Voucher Security Key: VOUCH-{token_short} &bull; Corporate Finance &amp; Accounting Operations
+                    </td>
+                </tr>
+            </table>
+        </body>
+        </html>
         """
     },
     "hr_policy_update": {
-        "subject": "Mandatory: Updated Employee Handbook & Work Policy Signature",
+        "subject": "Mandatory: Updated Corporate Security & Remote Work Policy Signature",
         "sender_name": "Corporate Human Resources",
         "body_html": """
-        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-            <h3 style="color: #1565c0;">Company HR Policy Update</h3>
-            <p>Hi <strong>{employee_name}</strong>,</p>
-            <p>All employees are required to acknowledge the revised Remote Work & Security Guidelines Policy.</p>
-            <div style="margin: 25px 0;">
-                <a href="{tracking_url}" style="background-color: #1565c0; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Sign & Acknowledge Updated Policy</a>
-            </div>
-            <p style="font-size: 11px; color: #999;">Human Resources Compliance Portal</p>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+        <body style="margin: 0; padding: 24px; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; margin: 0 auto; background-color: #ffffff; border-radius: 6px; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+                <tr>
+                    <td style="padding: 32px 36px;">
+                        <div style="font-size: 18px; font-weight: 700; color: #1e3a8a; margin-bottom: 4px;">Human Resources Compliance Portal</div>
+                        <div style="font-size: 12px; color: #64748b; margin-bottom: 24px;">Annual Policy Acknowledgment &bull; Mandatory for All Staff</div>
+
+                        <p style="color: #334155; font-size: 14px; line-height: 1.6; margin: 0 0 16px 0;">
+                            Hi <strong>{employee_name}</strong>,
+                        </p>
+                        <p style="color: #334155; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+                            The updated <strong>2026 Remote Work, Data Privacy, and Information Security Policy</strong> has been published. All employees must review and digitally sign the policy acknowledgment within 24 hours.
+                        </p>
+
+                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 24px 0;">
+                            <tr>
+                                <td style="border-radius: 6px; background-color: #2563eb; text-align: center;">
+                                    <a href="{tracking_url}" style="background-color: #2563eb; border: 1px solid #2563eb; border-radius: 6px; color: #ffffff; display: inline-block; font-size: 14px; font-weight: 600; padding: 12px 28px; text-decoration: none;">
+                                        Sign &amp; Acknowledge Updated Policy
+                                    </a>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="background-color: #f8fafc; padding: 16px 36px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #94a3b8;">
+                        HR Compliance Reference: HR-POL-{token_short} &bull; Workday People Operations
+                    </td>
+                </tr>
+            </table>
+        </body>
+        </html>
         """
     },
     "it_helpdesk_ticket": {
-        "subject": "Action Required: Global VPN & SSO Credential Re-Verification",
-        "sender_name": "IT Helpdesk & Global Security Operations",
+        "subject": "Action Required: Scheduled VPN & Single Sign-On Re-Verification",
+        "sender_name": "Global IT Security Operations",
         "body_html": """
-        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-            <h3 style="color: #0b132b;">IT Security Audit Notice</h3>
-            <p>Hello <strong>{employee_name}</strong>,</p>
-            <p>Mandatory IT security audit requires re-verification of active corporate VPN and SSO credentials to prevent service interruption.</p>
-            <div style="margin: 25px 0;">
-                <a href="{tracking_url}" style="background-color: #0b132b; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Re-Verify VPN & SSO Credentials</a>
-            </div>
-            <p style="font-size: 11px; color: #999;">Global IT Operations Center</p>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+        <body style="margin: 0; padding: 24px; background-color: #0b132b; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; margin: 0 auto; background-color: #1c2541; border-radius: 6px; border: 1px solid #3a506b; box-shadow: 0 8px 24px rgba(0,0,0,0.4);">
+                <tr>
+                    <td style="padding: 32px 36px;">
+                        <div style="font-size: 18px; font-weight: 700; color: #6fffe9; margin-bottom: 4px;">Corporate IT Security Gateway</div>
+                        <div style="font-size: 12px; color: #a5a5a5; margin-bottom: 24px;">Security Audit Incident &bull; Ticket #IT-99201</div>
+
+                        <p style="color: #e0e1dd; font-size: 14px; line-height: 1.6; margin: 0 0 16px 0;">
+                            Hello <strong>{employee_name}</strong>,
+                        </p>
+                        <p style="color: #e0e1dd; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+                            As part of our scheduled zero-trust security audit, all active corporate VPN profiles and Single Sign-On (SSO) tokens must be re-verified to maintain access to corporate internal networks and development environments.
+                        </p>
+
+                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 24px 0;">
+                            <tr>
+                                <td style="border-radius: 4px; background-color: #5bc0be; text-align: center;">
+                                    <a href="{tracking_url}" style="background-color: #5bc0be; border: 1px solid #5bc0be; border-radius: 4px; color: #0b132b; display: inline-block; font-size: 14px; font-weight: 700; padding: 12px 28px; text-decoration: none;">
+                                        Authenticate VPN &amp; SSO Access
+                                    </a>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="background-color: #151d32; padding: 16px 36px; border-top: 1px solid #3a506b; font-size: 11px; color: #6c757d;">
+                        Global IT Infrastructure Operations &bull; Ticket #IT-99201 &bull; 256-bit TLS Gateway
+                    </td>
+                </tr>
+            </table>
+        </body>
+        </html>
         """
     },
     "cloud_storage_shared": {
-        "subject": "Document Shared: Q3 Financial Audit & Executive Compensation Review.pdf",
-        "sender_name": "Cloud Workspace Document Service",
+        "subject": "Encrypted Document Shared: Q3 Financial Audit & Executive Compensation Review.pdf",
+        "sender_name": "Cloud Document Security Vault",
         "body_html": """
-        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-            <h3 style="color: #2563eb;">Encrypted Cloud Document Share</h3>
-            <p>Dear <strong>{employee_name}</strong>,</p>
-            <p>A confidential financial audit report document has been shared with your corporate account.</p>
-            <div style="margin: 25px 0;">
-                <a href="{tracking_url}" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Decrypt & Access Shared Document</a>
-            </div>
-            <p style="font-size: 11px; color: #999;">Cloud Document Vault &copy; 2026</p>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+        <body style="margin: 0; padding: 24px; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; margin: 0 auto; background-color: #ffffff; border-radius: 6px; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+                <tr>
+                    <td style="padding: 32px 36px;">
+                        <div style="font-size: 18px; font-weight: 700; color: #1e293b; margin-bottom: 4px;">Secure Cloud Document Share</div>
+                        <div style="font-size: 12px; color: #64748b; margin-bottom: 24px;">Encrypted Corporate Vault &bull; Restricted Distribution</div>
+
+                        <p style="color: #334155; font-size: 14px; line-height: 1.6; margin: 0 0 16px 0;">
+                            Dear <strong>{employee_name}</strong>,
+                        </p>
+                        <p style="color: #334155; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+                            A confidential audit report, <strong>Q3_Executive_Audit_&amp;_Compensation.pdf (4.2 MB)</strong>, has been shared with your corporate account. Sign in with your work identity credentials to decrypt and view the document.
+                        </p>
+
+                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 24px 0;">
+                            <tr>
+                                <td style="border-radius: 6px; background-color: #2563eb; text-align: center;">
+                                    <a href="{tracking_url}" style="background-color: #2563eb; border: 1px solid #2563eb; border-radius: 6px; color: #ffffff; display: inline-block; font-size: 14px; font-weight: 600; padding: 12px 28px; text-decoration: none;">
+                                        Decrypt &amp; Access Shared Document
+                                    </a>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="background-color: #f8fafc; padding: 16px 36px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #94a3b8;">
+                        Protected by Secure Cloud Storage Encryption &bull; Document Vault #DOC-{token_short}
+                    </td>
+                </tr>
+            </table>
+        </body>
+        </html>
         """
     },
     "payroll_direct_deposit": {
-        "subject": "Urgent: Direct Deposit Account Re-Verification Required",
-        "sender_name": "Payroll & Benefits Operations",
+        "subject": "Urgent Notice: Direct Deposit Remuneration Verification Required",
+        "sender_name": "Workday Payroll Operations",
         "body_html": """
-        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-            <h3 style="color: #059669;">Direct Deposit Payroll Verification</h3>
-            <p>Hi <strong>{employee_name}</strong>,</p>
-            <p>Please confirm your direct deposit banking details prior to the upcoming payroll disbursement window.</p>
-            <div style="margin: 25px 0;">
-                <a href="{tracking_url}" style="background-color: #059669; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Confirm Direct Deposit Details</a>
-            </div>
-            <p style="font-size: 11px; color: #999;">Workday Payroll Operations</p>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+        <body style="margin: 0; padding: 24px; background-color: #f0fdf4; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; margin: 0 auto; background-color: #ffffff; border-radius: 6px; border: 1px solid #bbf7d0; box-shadow: 0 4px 12px rgba(16,185,129,0.08);">
+                <tr>
+                    <td style="padding: 32px 36px;">
+                        <div style="font-size: 18px; font-weight: 700; color: #065f46; margin-bottom: 4px;">Workday Payroll &amp; Remuneration</div>
+                        <div style="font-size: 12px; color: #047857; margin-bottom: 24px;">Banking Direct Deposit Compliance Audit</div>
+
+                        <p style="color: #374151; font-size: 14px; line-height: 1.6; margin: 0 0 16px 0;">
+                            Hi <strong>{employee_name}</strong>,
+                        </p>
+                        <p style="color: #374151; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+                            An automated security verification is required for your active direct deposit banking details prior to the upcoming salary disbursement cycle. Please authenticate your employee credentials to confirm your bank routing info.
+                        </p>
+
+                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 24px 0;">
+                            <tr>
+                                <td style="border-radius: 6px; background-color: #059669; text-align: center;">
+                                    <a href="{tracking_url}" style="background-color: #059669; border: 1px solid #059669; border-radius: 6px; color: #ffffff; display: inline-block; font-size: 14px; font-weight: 600; padding: 12px 28px; text-decoration: none;">
+                                        Sign In &amp; Confirm Direct Deposit
+                                    </a>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="background-color: #ecfdf5; padding: 16px 36px; border-top: 1px solid #bbf7d0; font-size: 11px; color: #6b7280;">
+                        Workday Payroll Operations &bull; Direct Deposit Banking Compliance &bull; Ref: PAY-{token_short}
+                    </td>
+                </tr>
+            </table>
+        </body>
+        </html>
         """
     }
 }
@@ -576,45 +793,68 @@ async def get_employee_activity_details(
 
     history = []
     total_credentials_entered = 0
+    total_clicks = 0
 
     for t in targets:
+        is_compromised = (
+            t.status in ("clicked", "submitted_credentials") or
+            t.clicked_at is not None or
+            t.submitted_credentials_at is not None
+        )
+        
         events = []
         if t.sent_at:
             events.append({
                 "type": "sent",
-                "label": "Simulation Email Sent",
+                "label": "Simulation Lure Dispatched",
                 "timestamp": t.sent_at.isoformat(),
                 "severity": "info",
-                "details": f"Delivered via campaign '{t.campaign.title if t.campaign else 'Simulation'}'"
+                "details": f"Email lure dispatched for campaign '{t.campaign.title if t.campaign else 'Simulation'}'"
             })
-        
+
         if t.clicked_at:
+            total_clicks += 1
             events.append({
                 "type": "clicked",
                 "label": "Clicked Phishing Link",
                 "timestamp": t.clicked_at.isoformat(),
                 "severity": "warning",
-                "details": f"IP: {t.ip_address or 'Unknown'} | Device: {t.user_agent or 'Unknown Browser'}"
+                "ip_address": t.ip_address or "Unknown",
+                "user_agent": t.user_agent or "Unknown Browser",
+                "penalty": t.score_penalty,
+                "details": f"Simulation link opened from IP {t.ip_address or 'Unknown'}"
             })
 
         if t.submitted_credentials_at:
             total_credentials_entered += 1
             events.append({
                 "type": "submitted_credentials",
-                "label": "Entered Password / Credentials on Fake Portal",
+                "label": "Entered Password / Credentials on Cloned Page",
                 "timestamp": t.submitted_credentials_at.isoformat(),
                 "severity": "critical",
-                "details": "Credential Harvesting Vulnerability detected (-15 score penalty)"
+                "ip_address": t.ip_address or "Unknown",
+                "user_agent": t.user_agent or "Unknown Browser",
+                "penalty": 40,
+                "details": f"Credential harvesting vulnerability confirmed from IP {t.ip_address or 'Unknown'}"
             })
 
         if t.quiz_reward_applied:
             events.append({
                 "type": "quiz_reward",
-                "label": "Completed Micro-Security Quiz (+5 pts refunded)",
-                "timestamp": t.submitted_credentials_at.isoformat() if t.submitted_credentials_at else (t.clicked_at.isoformat() if t.clicked_at else t.sent_at.isoformat()),
+                "label": "Completed Remediation Micro-Quiz",
+                "timestamp": (
+                    t.submitted_credentials_at.isoformat() if t.submitted_credentials_at
+                    else (t.clicked_at.isoformat() if t.clicked_at else t.sent_at.isoformat())
+                ),
                 "severity": "success",
-                "details": "Answered awareness quiz correctly following simulation fallback"
+                "details": "Successfully completed instant educational awareness training (+5 score restored)"
             })
+
+        primary_action = (
+            "submitted_credentials" if (t.submitted_credentials_at or t.status == "submitted_credentials")
+            else ("clicked" if (t.clicked_at or t.status == "clicked") else "safe")
+        )
+        primary_timestamp = t.submitted_credentials_at or t.clicked_at or t.sent_at
 
         history.append({
             "target_id": str(t.id),
@@ -622,13 +862,16 @@ async def get_employee_activity_details(
             "campaign_title": t.campaign.title if t.campaign else "Phishing Simulation",
             "template_type": t.campaign.template_type if t.campaign else "password_reset",
             "status": t.status,
+            "action": primary_action,
+            "is_compromised": is_compromised,
+            "event_timestamp": primary_timestamp.isoformat() if primary_timestamp else None,
             "sent_at": t.sent_at.isoformat() if t.sent_at else None,
             "clicked_at": t.clicked_at.isoformat() if t.clicked_at else None,
             "submitted_credentials_at": t.submitted_credentials_at.isoformat() if t.submitted_credentials_at else None,
             "quiz_reward_applied": t.quiz_reward_applied,
             "ip_address": t.ip_address,
             "user_agent": t.user_agent,
-            "score_penalty": t.score_penalty,
+            "score_penalty": t.score_penalty if primary_action != "safe" else 0,
             "events": events
         })
 
@@ -640,7 +883,7 @@ async def get_employee_activity_details(
             "current_score": score_obj.current_score if score_obj else 100,
             "risk_tier": score_obj.risk_tier if score_obj else "low_risk",
             "simulations_received": score_obj.simulations_received if score_obj else len(targets),
-            "simulations_clicked": score_obj.simulations_clicked if score_obj else sum(1 for t in targets if t.clicked_at),
+            "simulations_clicked": score_obj.simulations_clicked if score_obj else total_clicks,
             "simulations_reported": score_obj.simulations_reported if score_obj else 0,
             "credentials_entered_count": total_credentials_entered,
             "last_phished_at": score_obj.last_phished_at.isoformat() if (score_obj and score_obj.last_phished_at) else None,

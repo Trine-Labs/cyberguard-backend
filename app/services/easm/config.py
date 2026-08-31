@@ -43,28 +43,42 @@ _HTTP_CLIENT = httpx.AsyncClient(
 
 # ── Port scan targets ──────────────────────────────────────────────────────────
 COMMON_PORTS = [
-    (21,    "FTP",        "high"),
-    (22,    "SSH",        "medium"),
-    (23,    "Telnet",     "critical"),
-    (25,    "SMTP",       "medium"),
-    (80,    "HTTP",       "info"),
-    (443,   "HTTPS",      "info"),
-    (3000,  "HTTP-Alt",   "medium"),
-    (4000,  "HTTP-Alt",   "medium"),
-    (3306,  "MySQL",      "critical"),
-    (5432,  "PostgreSQL", "critical"),
-    (6379,  "Redis",      "critical"),
-    (8000,  "HTTP-Alt",   "medium"),
-    (8081,  "HTTP-Alt",   "medium"),
-    (8080,  "HTTP-Alt",   "medium"),
-    (8443,  "HTTPS-Alt",  "low"),
-    (27017, "MongoDB",    "critical"),
-    (3003,  "HTTP-Alt",   "medium"),
-    (3004,  "HTTP-Alt",   "medium"),
+    (21,    "FTP",          "high"),
+    (22,    "SSH",          "medium"),
+    (23,    "Telnet",       "critical"),
+    (25,    "SMTP",         "medium"),
+    (80,    "HTTP",         "info"),
+    (443,   "HTTPS",        "info"),
+    (445,   "SMB",          "critical"),
+    (1433,  "MSSQL",        "critical"),
+    (2082,  "cPanel-HTTP",  "high"),
+    (2083,  "cPanel-HTTPS", "high"),
+    (2086,  "WHM-HTTP",     "critical"),
+    (2087,  "WHM-HTTPS",    "critical"),
+    (2095,  "Webmail-HTTP", "medium"),
+    (2096,  "Webmail-HTTPS","medium"),
+    (3000,  "HTTP-Alt",     "medium"),
+    (3003,  "HTTP-Alt",     "medium"),
+    (3004,  "HTTP-Alt",     "medium"),
+    (3306,  "MySQL",        "critical"),
+    (3389,  "RDP",          "critical"),
+    (4000,  "HTTP-Alt",     "medium"),
+    (5432,  "PostgreSQL",   "critical"),
+    (5900,  "VNC",          "critical"),
+    (6379,  "Redis",        "critical"),
+    (8000,  "HTTP-Alt",     "medium"),
+    (8080,  "HTTP-Alt",     "medium"),
+    (8081,  "HTTP-Alt",     "medium"),
+    (8443,  "HTTPS-Alt",    "low"),
+    (8888,  "HTTP-Alt",     "medium"),
+    (9090,  "HTTP-Alt",     "medium"),
+    (9200,  "Elasticsearch","critical"),
+    (10000, "Webmin",       "critical"),
+    (27017, "MongoDB",      "critical"),
 ]
 
 # Ports that are risky when publicly internet-reachable
-RISKY_PORTS = {3306, 5432, 6379, 27017, 23, 21}
+RISKY_PORTS = {3306, 5432, 6379, 27017, 23, 21, 3389, 445, 9200, 5900, 1433, 2086, 2087, 10000}
 # Ports risky only if no auth banner found
 CONDITIONALLY_RISKY = {22, 25}
 

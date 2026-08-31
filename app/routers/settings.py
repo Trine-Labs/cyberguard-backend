@@ -10,9 +10,10 @@ from pydantic import BaseModel, validator
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db, get_current_user, require_admin
+from app.dependencies import get_db, get_current_user, require_admin, TokenUser
 from app.database import set_rls_tenant
 from app.models.user import User
+from app.models.tenant import Tenant
 from app.models.scope import ScanScope
 from app.models.easm import EasmAsset, EasmPort, EasmCertificate
 from app.services.dns_service import (
@@ -459,5 +460,53 @@ async def verify_scope(
         "verified": verified,
         "message": message,
         "attempts": scope.verification_attempts,
+    }
+
+
+class ScanFrequencyBody(BaseModel):
+    frequency: str  # hourly | 6hours | daily | 3days
+
+
+@router.get("/profile")
+async def get_settings_profile(
+    current_user: TokenUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """Fetch current user profile and tenant details dynamically."""
+    await set_rls_tenant(session, str(current_user.tenant_id))
+    tenant = await session.get(Tenant, current_user.tenant_id)
+    
+    user_email = current_user.email
+    if not user_email:
+        user = await session.get(User, current_user.id)
+        if user:
+            user_email = user.email
+
+    return {
+        "email": user_email or "",
+        "org_name": tenant.org_name if tenant else "CyberGuard Platform",
+        "scan_frequency": tenant.scan_frequency if tenant else "hourly",
+        "active_sessions": "1 device",
+        "created_at": tenant.created_at.isoformat() if (tenant and tenant.created_at) else None,
+    }
+
+
+@router.patch("/scan-frequency")
+async def update_scan_frequency(
+    body: ScanFrequencyBody,
+    current_user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_db),
+):
+    """Update tenant scan frequency preference."""
+    tenant = await session.get(Tenant, current_user.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+
+    tenant.scan_frequency = body.frequency
+    await session.commit()
+    await session.refresh(tenant)
+    return {
+        "message": "Scan frequency updated successfully.",
+        "scan_frequency": tenant.scan_frequency,
     }
 

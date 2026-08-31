@@ -16,7 +16,7 @@ _NUCLEI_SEM = asyncio.Semaphore(1)
 MAX_TEMPLATES_PER_PHASE = 100
 
 # Hard timeout per Nuclei subprocess (seconds)
-NUCLEI_TIMEOUT = 300
+NUCLEI_TIMEOUT = 120
 
 class NucleiVerificationEngine:
     def __init__(self):
@@ -37,7 +37,7 @@ class NucleiVerificationEngine:
             if not self.nuclei_bin.exists():
                 logger.warning(f"Nuclei binary not found in bin/ or system PATH at {self.nuclei_bin}")
 
-    def _find_matching_templates(self, folders: list[str], tags: str) -> list[str]:
+    def _find_matching_templates(self, folders: list[str], tags: str, max_templates: int = 50) -> list[str]:
         matching_paths = []
         if not self.templates_dir.exists() or not tags:
             return []
@@ -70,7 +70,7 @@ class NucleiVerificationEngine:
                                 # Skip heavy brute force/directory fuzzing templates
                                 max_req_match = max_req_re.search(head)
                                 if max_req_match:
-                                    if int(max_req_match.group(1)) > 100:
+                                    if int(max_req_match.group(1)) > 50:
                                         continue
 
                                 match = tags_re.search(head)
@@ -90,19 +90,17 @@ class NucleiVerificationEngine:
         def _score(p):
             p_lower = p.lower()
             score = 0
-            if "api" in p_lower: score -= 10
-            if "config" in p_lower: score -= 10
-            if "env" in p_lower: score -= 10
-            if "token" in p_lower: score -= 10
-            if "default" in p_lower: score -= 5
-            if "panel" in p_lower: score -= 5
-            if "cve" in p_lower: score -= 5
+            if "rce" in p_lower or "cve" in p_lower: score -= 15
+            if "api" in p_lower or "token" in p_lower: score -= 10
+            if "config" in p_lower or "env" in p_lower: score -= 10
+            if "default" in p_lower or "panel" in p_lower: score -= 5
             return (score, p)
 
         matching_paths.sort(key=_score)
+        selected_paths = matching_paths[:max_templates]
         
-        logger.info(f"[Nuclei] Pre-filtered templates for folders {folders} and tags {tags}: found {len(matching_paths)} matches.")
-        return matching_paths
+        logger.info(f"[Nuclei] Pre-filtered templates for folders {folders} and tags {tags}: found {len(matching_paths)} matches, selected top {len(selected_paths)}.")
+        return selected_paths
 
     async def _filter_active_targets(self, targets: list[str]) -> list[str]:
         """Verify that target URLs are responsive before passing them to Nuclei to prevent hangs."""
@@ -111,7 +109,7 @@ class NucleiVerificationEngine:
         async def check_target(url: str):
             try:
                 # Use a short connect/read timeout to check responsiveness
-                async with httpx.AsyncClient(verify=False, timeout=2.5) as client:
+                async with httpx.AsyncClient(verify=False, timeout=2.0) as client:
                     await client.get(url, follow_redirects=False)
                     return url
             except Exception as e:
@@ -148,9 +146,6 @@ class NucleiVerificationEngine:
                 logger.info("[Nuclei/PreCheck] No responsive targets found. Skipping verification.")
                 return []
 
-            # Split targets to optimize scans:
-            # Phase 1 & 2 run directory-level checks (like /wp-config.php) so they only need base URLs or directories.
-            # Running them on every single API endpoint causes exponential slowdowns.
             from urllib.parse import urlparse
             base_targets = set()
             for t in targets:
@@ -169,7 +164,8 @@ class NucleiVerificationEngine:
             phase1_tags = "exposure,default-login,takeover,env,misconfig,config,backup,auth,dump,metrics"
             phase1_paths = self._find_matching_templates(
                 ["http/exposures", "http/default-logins", "http/exposed-panels", "http/takeovers", "http/misconfiguration"],
-                phase1_tags
+                phase1_tags,
+                max_templates=35
             )
 
             all_results = []
@@ -197,10 +193,11 @@ class NucleiVerificationEngine:
 
             if tech_tags_filtered:
                 phase2_tags = ",".join(tech_tags_filtered)
-                # http/technologies only — http/cves has thousands of templates and is too slow
+                # Technology-specific CVEs and vulnerability verification (capped at 30 top templates)
                 phase2_paths = self._find_matching_templates(
-                    ["http/technologies"],
-                    phase2_tags
+                    ["http/technologies", "http/cves", "http/vulnerabilities"],
+                    phase2_tags,
+                    max_templates=30
                 )
 
                 if phase2_paths:
@@ -210,14 +207,12 @@ class NucleiVerificationEngine:
                     logger.info(f"[Nuclei] No matching Phase 2 templates found for tags {phase2_tags}. Skipping Phase 2.")
 
             # ── Phase 3: DAST (Dynamic Application Security Testing) ──
-            # Always runs — but capped at 20 templates (max-request ≤ 50 filter already applies)
-            # This keeps DAST fast (~30-60s) while still catching SQLi/XSS/LFI on apps like Juice Shop
             phase3_tags = "dast,sqli,xss,ssti,lfi,rce,injection,idor,redirect"
             phase3_paths = self._find_matching_templates(
                 ["dast"],
-                phase3_tags
+                phase3_tags,
+                max_templates=20
             )
-            # Let _run_nuclei_batch chunk the DAST templates
 
             if phase3_paths:
                 r3 = await self._run_nuclei_batch(targets, phase3_tags, phase3_paths, is_dast=True)
@@ -347,11 +342,11 @@ class NucleiVerificationEngine:
             "-no-stdin",        # Disable stdin
             "-mhe", "3",        # Max host errors before skipping
             "-severity", "low,medium,high,critical",  # Skip info — reduces volume significantly
-            "-timeout", "5",    # Per-request timeout (longer = fewer retries)
+            "-timeout", "4",    # Per-request timeout (seconds)
             "-retries", "0",    # No retries — reduces total requests
-            "-bulk-size", "20", # Templates per host batch (was 50)
-            "-rate-limit", "30", # Max 30 req/s total (was 500 — flagged as DDoS)
-            "-c", "10",         # Max 10 concurrent goroutines (was 50)
+            "-bulk-size", "25", # Templates per host batch
+            "-rate-limit", "80",# Max 80 req/s total (fast and safe)
+            "-c", "20",         # Max 20 concurrent goroutines
             "-rsr", "524288",   # Limit response read to 512KB
             "-headless-bulk-size", "1",  # Headless template concurrency
         ]

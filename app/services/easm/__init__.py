@@ -16,7 +16,10 @@ from app.services.easm.config import (
     _is_cidr,
     _is_ip,
 )
-from app.services.easm.findings import _generate_findings
+from app.services.easm.findings import (
+    _generate_findings,
+    _generate_subdomain_info_finding,
+)
 from app.services.easm.hibp import (
     _check_hibp_domain_breach,
     _check_hibp_public_breaches_free,

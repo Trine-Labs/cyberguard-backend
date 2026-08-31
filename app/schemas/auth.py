@@ -92,6 +92,10 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     must_change_password: bool = False
+    user_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
 
 
 class RefreshTokenRequest(BaseModel):

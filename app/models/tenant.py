@@ -26,6 +26,7 @@ class Tenant(Base):
     contact_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     company_info: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # Data Training / AI Background Context
     scan_frequency: Mapped[str] = mapped_column(String(50), nullable=False, default="daily")  # weekly, daily, twice_daily, six_hours
+    default_language: Mapped[str] = mapped_column(String(10), nullable=False, default="en")  # en, fr
     status: Mapped[str] = mapped_column(
         ENUM("onboarding", "active", "suspended", name="tenant_status", create_type=False),
         nullable=False, default="onboarding"

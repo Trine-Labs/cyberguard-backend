@@ -92,6 +92,7 @@ def create_access_token(
     user_id: str,
     tenant_id: str,
     role: str,
+    email: Optional[str] = None,
     expires_delta: Optional[timedelta] = None,
 ) -> str:
     """Issue a signed JWT access token."""
@@ -102,6 +103,7 @@ def create_access_token(
         "sub": str(user_id),
         "tenant_id": str(tenant_id),
         "role": role,
+        "email": email or "",
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "jti": str(uuid.uuid4()),   # JWT ID for revocation tracking (Phase 2)

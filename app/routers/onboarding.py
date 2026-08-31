@@ -329,3 +329,34 @@ async def get_onboarding_status(
         m365_connected=m365 is not None,
         checklist=checklist,
     )
+
+
+@router.post("/complete")
+async def complete_onboarding(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Finalize tenant onboarding permanently. Sets tenant status to 'active'
+    and onboarding_step to 4 so onboarding steps are never shown again.
+    """
+    await set_rls_tenant(session, str(current_user.tenant_id))
+    
+    tenant = await session.get(Tenant, current_user.tenant_id)
+    if tenant:
+        tenant.status = "active"
+        tenant.onboarding_step = 4
+        await session.commit()
+        
+        await log_action(
+            session=session,
+            tenant_id=current_user.tenant_id,
+            actor_user_id=current_user.id,
+            action=AuditAction.SETTINGS_UPDATED,
+            ip_address=get_client_ip(request),
+            metadata={"onboarding_completed": True, "status": "active"},
+        )
+        
+    return {"status": "active", "message": "Onboarding completed successfully."}
+

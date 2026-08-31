@@ -25,17 +25,17 @@ class Finding(Base):
     )
     finding_num = Column(Integer, nullable=False)  # auto from sequence, becomes FIN-{num}
     severity = Column(
-        PgEnum("critical", "high", "medium", "low", "info", name="finding_severity"),
+        PgEnum("critical", "high", "medium", "low", "info", name="finding_severity", create_type=False),
         nullable=False
     )
     source = Column(
-        PgEnum("m365", "ext_scanner", "manual", "human_risk", "phishing", name="finding_source"),
+        PgEnum("m365", "ext_scanner", "manual", "human_risk", "phishing", name="finding_source", create_type=False),
         nullable=False
     )
     issue_type = Column(String(255), nullable=False)
     entity = Column(String(512), nullable=False)
     status = Column(
-        PgEnum("open", "resolved", "accepted_risk", "false_positive", name="finding_status"),
+        PgEnum("open", "resolved", "accepted_risk", "false_positive", name="finding_status", create_type=False),
         nullable=False, default="open"
     )
     evidence = Column(JSONB, nullable=False, default=dict)
