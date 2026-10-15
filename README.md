@@ -1,5 +1,7 @@
 # CyberGuard — Backend
 
+![CyberGuard security dashboard powered by this API — illustrative sample data](docs/images/cyberguard-cover.webp)
+
 The FastAPI service behind CyberGuard, a security-management platform for external attack surface visibility and Microsoft 365 identity/configuration findings. The [Next.js frontend](https://github.com/Trine-Labs/cyberguard-frontend) consumes this API.
 
 ## Responsibilities
